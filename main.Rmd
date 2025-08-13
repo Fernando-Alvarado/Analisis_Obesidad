@@ -1,0 +1,335 @@
+---
+title: "PCA y FA de Phishing"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#Ruta de los datos en caso de que requiera
+
+#Cargamos nuestras librerías 
+library(ggplot2)
+library(dplyr)
+#Librerias necesarias
+library(tidyverse)
+library(ggplot2)
+library(factoextra)
+library(dplyr)
+library(esquisse)
+library(scatterplot3d)
+library(factoextra)
+library(patchwork)
+library(here)
+library(esquisse)
+library(skimr)
+library(corrplot)
+library(vcd)
+
+
+```
+
+```{r Data}
+
+data <- read.csv(here("Data", "Obesity.csv"))
+
+
+head(data)
+
+
+```
+
+## Introducción a los Datos
+
+El conjunto de datos **Obesity.csv** contiene información destinada a estimar los niveles de obesidad en función de los hábitos alimentarios, los antecedentes familiares y la condición física de los individuos. La base de datos incluye registros de personas de México, Perú y Colombia, abarcando un total de **2,111 observaciones** y **16 variables** relacionadas con el estilo de vida y la salud.
+
+Las variables recogen información como el género, edad, altura, peso, antecedentes familiares de sobrepeso, frecuencia de consumo de ciertos alimentos, hábitos de hidratación, control de la ingesta calórica, actividad física, tiempo de uso de tecnología, consumo de alcohol y medio de transporte habitual. Además, se incluyen etiquetas que clasifican el nivel de obesidad, desde peso insuficiente hasta obesidad tipo III.
+
+La mayoría de los datos fueron generados mediante técnicas sintéticas, mientras que algunos provienen directamente de usuarios a través de una plataforma web, lo que permite contar con un conjunto diverso y representativo para el análisis.
+
+
+
+```{r}
+skim(data)
+```
+
+
+```{r}
+summary(data)
+```
+```{r}
+head(data$CALC)
+```
+
+
+```{r}
+data <- data %>%
+  mutate(Gender = as.factor(Gender),
+         CALC = as.factor(CALC),
+         FAVC = as.factor(FAVC),
+         SCC = as.factor(SCC),
+         SMOKE = as.factor(SMOKE),
+         family_history_with_overweight = as.factor(family_history_with_overweight),
+         CAEC = as.factor(CAEC),
+         MTRANS = as.factor(MTRANS),
+         NObeyesdad = as.factor(NObeyesdad)
+         
+         
+  )
+```
+
+
+Resumen de los datos....
+
+
+### Dividiendo los datos en continuos y en categoricos
+
+```{r}
+# Variables categóricas (factores o cadenas)
+var_numeric <- data %>% dplyr::select(where(is.numeric), NObeyesdad) 
+
+
+vars_cat <- data %>%  dplyr::select(where(is.factor))
+
+
+summary(var_numeric)
+
+```
+
+```{r Graficas_Bonitas1,  fig.width=15, fig.height=10}
+entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad" )
+graficasCat <- list()
+
+
+for(i in entradas){
+  p <- ggplot(vars_cat) +
+  aes(x = data[[i]], fill = NObeyesdad) +
+  geom_bar() +
+  scale_fill_manual(
+    values = c(Insufficient_Weight = "#03BCB7",
+    Normal_Weight = "#58D713",
+    Obesity_Type_I = "#FFDB0C",
+    Obesity_Type_II = "#FF8600",
+    Obesity_Type_III = "#F44408",
+    Overweight_Level_I = "#C90822",
+    Overweight_Level_II = "#800026")
+  ) +
+  labs(title = paste0(i, " vs NObesity"), x = i) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(
+    legend.text = element_text(size = 7),     # Tamaño texto
+    legend.title = element_text(size = 8),    # Tamaño título
+    legend.key.size = unit(0.4, "cm")         # Tamaño recuadros
+  )
+  #Haciendo las graficas
+   graficasCat[[length(graficasCat) + 1]] <- p
+
+
+}
+
+graficasCat[[1]] + graficasCat[[2]] + graficasCat[[3]] + graficasCat[[4]] + graficasCat[[5]] + graficasCat[[6]] + graficasCat[[7]] + graficasCat[[8]] + graficasCat[[9]] + plot_layout(ncol = 3)
+
+
+```
+
+```{r, Graficas_Bonitas2,  fig.width=15, fig.height=10}
+vars <- c("Age", "Height", "Weight", "FCVC", "NCP", "CH2O", "FAF", "TUE")
+graficasNum <- list()
+
+for(i in vars){
+  p <- ggplot(var_numeric) +
+  aes_string(x = i, fill = "NObeyesdad") +
+  geom_histogram(bins = 30L) +
+  scale_fill_manual(
+    values = c(Insufficient_Weight = "#03BCB7",
+    Normal_Weight = "#58D713",
+    Obesity_Type_I = "#FFDB0C",
+    Obesity_Type_II = "#FF8600",
+    Obesity_Type_III = "#F44408",
+    Overweight_Level_I = "#C90822",
+    Overweight_Level_II = "#800026")
+  ) +
+  labs(title = paste0(i, " vs NObesity"), x = i) +
+  theme_minimal() +
+  theme(
+    legend.text = element_text(size = 7),     # Tamaño texto
+    legend.title = element_text(size = 8),    # Tamaño título
+    legend.key.size = unit(0.4, "cm")         # Tamaño recuadros
+  )
+  
+  graficasNum[[length(graficasNum) + 1]] <- p
+}
+graficasNum[[1]] + graficasNum[[2]] + graficasNum[[3]] + graficasNum[[4]] + graficasNum[[5]] + graficasNum[[6]] + graficasNum[[7]] + graficasNum[[8]] + plot_layout(ncol = 3)
+
+
+
+```
+
+### Analisis de correlacion
+
+```{r Correlacion_Continueas}
+
+var_numeric <- var_numeric %>% dplyr::select(-NObeyesdad )
+
+cor(var_numeric)
+
+corrplot(cor(var_numeric), method = "circle", type = "upper", tl.col = "black", tl.srt = 45, addCoef.col = "black")
+```
+
+```{r Correlacion_categoricas}
+# Obtener nombres de columnas categóricas
+cat_cols <- names(vars_cat)
+
+# Crear matriz vacía
+cramer_mat <- matrix(NA, nrow = length(cat_cols), ncol = length(cat_cols),
+                     dimnames = list(cat_cols, cat_cols))
+
+# Calcular Cramér's V
+for (i in cat_cols) {
+  for (j in cat_cols) {
+    cramer_mat[i, j] <- suppressWarnings(assocstats(table(vars_cat[[i]], vars_cat[[j]]))$cramer)
+  }
+}
+round(cramer_mat, 2)
+
+
+#Haciendo la correlacion Variables categoricas
+corrplot(cramer_mat,
+         method = "circle",
+         type = "upper",
+         tl.col = "black",
+         tl.srt = 45,
+         tl.cex = 0.6
+         # addCoef.col = "black"  ← esto lo eliminas o comentas
+)
+matthews
+
+```
+
+
+
+
+### Analisis PCA
+
+
+```{r pca_numericas}
+pca2 <- prcomp(var_numeric, scale. = TRUE)
+summary(pca2)
+```
+
+
+```{r pca_categoricas}
+nombresCat <- rownames(cramer_mat)
+pca <- prcomp(cramer_mat, scale. = TRUE)
+summary(pca)
+```
+
+
+#### Graficas PCA
+
+
+**Variables categoricas**
+
+```{r}
+#Grafica del Bracito 
+fviz_eig(pca, addlabels = TRUE, ylim = c(0, 100))
+```
+**Variables continuas**
+
+```{r}
+#Grafica del Bracito 
+fviz_eig(pca2, addlabels = TRUE, ylim = c(0, 100))
+```
+
+
+
+
+#### Graficas aporte cada componenete 
+
+***Categoricas***
+
+```{r,  fig.width=15, fig.height=5}
+# Gráficas individuales
+g1 <- fviz_contrib(pca, choice = "var", axes = 1) + ggtitle("Contribucion al componente 1")
+g2 <- fviz_contrib(pca, choice = "var", axes = 2) + ggtitle("Contribucion al componente 2")
+g3 <- fviz_contrib(pca, choice = "var", axes = 3) + ggtitle("Contribucion al componente 2")
+
+# Lado a lado
+g1 + g2 + g3
+
+
+
+
+```
+***Continuas***
+
+
+```{r}
+
+
+
+# Gráficas individuales
+g12 <- fviz_contrib(pca2, choice = "var", axes = 1) + ggtitle("Contribucion al componente 1")
+g22 <- fviz_contrib(pca2, choice = "var", axes = 2) + ggtitle("Contribucion al componente 2")
+g23 <- fviz_contrib(pca2, choice = "var", axes = 3) + ggtitle("Contribucion al componente 3")
+
+# Lado a lado
+g12 + g22 + g23
+
+
+```
+
+
+
+
+
+
+
+-------------------------- 
+***Ver que mas graficas trabajo el profe y agregarlas, 
+
+
+
+## TSNe
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
