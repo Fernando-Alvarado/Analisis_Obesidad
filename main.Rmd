@@ -52,16 +52,10 @@ La mayoría de los datos fueron generados mediante técnicas sintéticas, mientr
 
 
 ```{r}
-skim(data)
+#skim(data)
 ```
 
 
-```{r}
-summary(data)
-```
-```{r}
-head(data$CALC)
-```
 
 
 ```{r}
@@ -257,19 +251,6 @@ g1 <- fviz_contrib(pca, choice = "var", axes = 1) + ggtitle("Contribucion al com
 g2 <- fviz_contrib(pca, choice = "var", axes = 2) + ggtitle("Contribucion al componente 2")
 g3 <- fviz_contrib(pca, choice = "var", axes = 3) + ggtitle("Contribucion al componente 2")
 
-# Lado a lado
-g1 + g2 + g3
-
-
-
-
-```
-***Continuas***
-
-
-```{r}
-
-
 
 # Gráficas individuales
 g12 <- fviz_contrib(pca2, choice = "var", axes = 1) + ggtitle("Contribucion al componente 1")
@@ -277,14 +258,44 @@ g22 <- fviz_contrib(pca2, choice = "var", axes = 2) + ggtitle("Contribucion al c
 g23 <- fviz_contrib(pca2, choice = "var", axes = 3) + ggtitle("Contribucion al componente 3")
 
 # Lado a lado
-g12 + g22 + g23
+
+
+
+# Lado a lado
+(g1 + g2 + g3) / (g12 + g22 + g23)
+
+
 
 
 ```
 
 
 
+```{r}
+pca_df <- as.data.frame(pca2$x)# Obtenemos las coordenadas del PCA
+pca_df$NObeyesdad <- data$NObeyesdad # Agregamos la columna de la clase (NObesity) a los datos proyectados
 
+
+
+
+#Creando la funcion para dividir bien a nuestros datos en un scatter plot 
+scatterplot_pca <- function(df, pca, texto){
+  # Scatterplot de PC1 vs PC2
+  ggplot(df, aes(x = PC1, y = PC2, color = NObeyesdad)) +
+  geom_point(size = 3, alpha = 0.7) +
+  theme_minimal() +
+  labs(title = texto,
+       x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100,1), "% varianza)"),
+       y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100,1), "% varianza)")) +
+  scale_color_brewer(palette = "Set1")   # paleta de colores bonita
+}
+
+ scatterplot_pca(pca_df, pca2,  "PCA: separación por NObesity (Continuas)")
+
+#scatterplot_pca(pca_df2, pca,  "PCA: separación por NObesity (Categoricas)")
+
+
+```
 
 
 
@@ -302,10 +313,22 @@ g12 + g22 + g23
 
 
 
+```{r}
+fviz_pca_var(pca2, col.var = "cos2", 
+             geom.var = "arrow", 
+             labelsize = 2, 
+             repel = FALSE)
+```
 
 
 
-
+```{r}
+fviz_pca_var(pca, col.var = "cos2", 
+             geom.var = "arrow", 
+             labelsize = 2, 
+             repel = FALSE) +
+  labs(title = "Círculo de correlaciones (PCA)")
+```
 
 
 
