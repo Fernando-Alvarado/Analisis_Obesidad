@@ -36,7 +36,8 @@ library(vcd)
 data <- read.csv(here("Data", "Obesity.csv"))
 
 
-head(data)
+#head(data)
+
 
 
 ```
@@ -53,9 +54,44 @@ La mayoría de los datos fueron generados mediante técnicas sintéticas, mientr
 
 ```{r}
 #skim(data)
+
+analisis <- data 
+
+
+skim(analisis)
 ```
+### Variables seleccionadas
+
+- **FCVC**: Indica la frecuencia con la que el individuo consume verduras.  
+  Escalas: 1 = **Nunca**, 2 = **A veces**, 3 = **Siempre**.  
+
+- **NCP**: Representa el número de comidas principales consumidas por día.  
+  Escalas: 1 = **1–2 comidas**, 2 = **3 comidas**, 3 = **4 comidas**, 4 = **Más de 4 comidas**.  
+
+- **CH2O**: Describe la cantidad de agua consumida diariamente.  
+  Escalas: 1 = **Menos de 1L**, 2 = **1–2L**, 3 = **Más de 2L**.  
+
+- **FAF**: Señala la frecuencia con la que la persona realiza actividad física.  
+  Escalas: 0 = **Nunca**, 1 = **1–2 veces por semana**, 2 = **2–4 veces por semana**, 3 = **4–5 veces por semana**.  
+
+- **TUE**: Cuantifica el número de horas al día frente a un dispositivo electrónico.  
+  Escalas: 0 = **0–2 horas**, 1 = **3–5 horas**, 2 = **Más de 5 horas**.  
 
 
+### Estadísticas descriptivas
+
+En este estudio, los participantes presentaron en promedio:  
+
+- **Edad**: 24 años  
+- **Estatura**: 1.70 metros  
+- **Peso**: 86.5 kilogramos  
+- **Comidas principales**: Entre 3 y 4 por día  
+- **Consumo de verduras**: Ocasional  
+- **Consumo de agua**: 1–2 litros diarios  
+- **Actividad física**: 1–2 veces por semana  
+- **Uso de dispositivos electrónicos**: Entre 2 y 5 horas diarias  
+
+A primera vista, estos resultados sugieren que los participantes no mantienen los **mejores hábitos de salud**, dado el consumo moderado de verduras y agua, la baja frecuencia de actividad física y la exposición considerable al uso de dispositivos electrónicos.
 
 
 ```{r}
@@ -128,6 +164,9 @@ graficasCat[[1]] + graficasCat[[2]] + graficasCat[[3]] + graficasCat[[4]] + graf
 
 
 ```
+En la siguiente gráfica se observa que nuestras clases están **balanceadas**, es decir, contamos con un número similar de participantes en cada categoría de **Grado de Obesidad**, lo cual se mantiene de manera consistente a lo largo de todas las variables analizadas.
+
+
 
 ```{r, Graficas_Bonitas2,  fig.width=15, fig.height=10}
 vars <- c("Age", "Height", "Weight", "FCVC", "NCP", "CH2O", "FAF", "TUE")
@@ -159,10 +198,24 @@ for(i in vars){
 graficasNum[[1]] + graficasNum[[2]] + graficasNum[[3]] + graficasNum[[4]] + graficasNum[[5]] + graficasNum[[6]] + graficasNum[[7]] + graficasNum[[8]] + plot_layout(ncol = 3)
 
 
-
 ```
 
-### Analisis de correlacion
+En la siguiente gráfica se muestra la distribución de nuestras variables.  
+En particular, observamos que la mayoría de los participantes en el estudio son **jóvenes entre 20 y 24 años**.  
+Además, se aprecia que la estatura más frecuente se encuentra en el rango de **1.60 a 1.80 metros**, lo que corresponde al promedio esperado en la población analizada.
+
+
+
+### Análisis de correlación
+
+Para este análisis se aplicaron dos enfoques complementarios:
+
+- **Variables continuas**: se calcularon coeficientes de correlación de Pearson, lo que permite medir la relación lineal entre dos variables cuantitativas.  
+- **Variables categóricas**: se utilizó el **Coeficiente V de Cramer**, basado en el estadístico Chi-cuadrado. Este coeficiente es apropiado para medir la **fuerza de asociación** entre variables cualitativas y toma valores entre 0 (sin asociación) y 1 (asociación perfecta).
+
+El uso de ambos métodos cuenta con sustento teórico: la correlación de Pearson es un estándar ampliamente aceptado para datos continuos, mientras que el V de Cramer es una extensión del Chi-cuadrado que evita problemas de dependencia con el tamaño de la muestra, lo que lo hace adecuado para el análisis de variables categóricas.
+
+De esta forma, se obtiene una visión más completa de las posibles relaciones entre las variables de estudio, considerando tanto las continuas como las categóricas.
 
 ```{r Correlacion_Continueas}
 
@@ -172,6 +225,21 @@ cor(var_numeric)
 
 corrplot(cor(var_numeric), method = "circle", type = "upper", tl.col = "black", tl.srt = 45, addCoef.col = "black")
 ```
+
+#### Análisis de correlación entre variables continuas
+
+En la primera gráfica se observa una **relación importante entre la altura y el peso**  
+(correlación = 0.46), lo cual es esperable y relevante, ya que ambas variables son claves para determinar si una persona presenta obesidad y en qué grado.  
+
+También se aprecia una **relación negativa entre la edad y el número de horas frente a un dispositivo electrónico** (correlación = -0.30), lo que sugiere que los participantes más jóvenes tienden a pasar más tiempo utilizando dispositivos electrónicos.  
+
+Otras correlaciones de interés son:  
+- **Altura y NCP** (número de comidas principales por día).  
+- **Altura y CH2O** (consumo diario de agua).  
+- **Altura y FAF** (frecuencia de actividad física).  
+
+Si bien estos valores son más bajos que los principales, resultan relevantes para complementar la comprensión de los hábitos de los participantes.
+
 
 ```{r Correlacion_categoricas}
 # Obtener nombres de columnas categóricas
@@ -199,49 +267,96 @@ corrplot(cramer_mat,
          tl.cex = 0.6
          # addCoef.col = "black"  ← esto lo eliminas o comentas
 )
-matthews
+
 
 ```
 
+#### Asociación entre variables categóricas
+
+En el caso de las variables categóricas, se observa que la variable **NObesity** (tipo de obesidad) presenta las asociaciones más relevantes.  
+En particular, se encuentra fuertemente relacionada con:  
+
+- **Género**  
+- **Historial familiar con obesidad**  
+- **FAVC**: frecuencia de consumo de comida con alto contenido calórico  
+- **CAEC**: consumo de alimentos entre comidas principales  
+
+Estos resultados son consistentes con la literatura, ya que el **sexo**, los **antecedentes familiares** y los **hábitos alimenticios** suelen ser predictores importantes en el desarrollo de sobrepeso u obesidad.  
+Por lo tanto, estas variables pueden considerarse como **buenos parámetros para identificar y clasificar** si una persona presenta o no obesidad o sobrepeso.
 
 
 
-### Analisis PCA
+### Análisis de PCA
+
+Con base en el análisis de correlación y asociación realizado previamente, se aplicó la técnica de **Análisis de Componentes Principales (PCA)** con el objetivo de **reducir la dimensionalidad** de los datos y facilitar la interpretación de las variables.
+
+En el caso de las **variables numéricas**, el primer componente principal explica un **26.38%** de la varianza total, mientras que el segundo componente aporta un **18.66%** adicional.  
+De esta forma, los tres primeros componentes acumulan un **53.95%** de la varianza explicada.  
+Para superar el **90%** de varianza acumulada, sería necesario emplear al menos **7 componentes**, lo que indica que las variables contienen información dispersa que no puede resumirse fácilmente en pocos ejes principales.
+
+Por otro lado, el análisis de PCA con las **variables categóricas transformadas** muestra un comportamiento similar: los dos primeros componentes explican en conjunto un **53.95%** de la varianza acumulada.  
+
+En ambos casos, se decidió emplear únicamente **dos componentes principales**, lo que permite **visualizar los datos en un plano bidimensional**, identificar posibles **clústeres** y analizar la contribución de las variables a dichos componentes.
+
 
 
 ```{r pca_numericas}
 pca2 <- prcomp(var_numeric, scale. = TRUE)
-summary(pca2)
+#summary(pca2)
 ```
 
 
 ```{r pca_categoricas}
 nombresCat <- rownames(cramer_mat)
 pca <- prcomp(cramer_mat, scale. = TRUE)
-summary(pca)
+#summary(pca)
 ```
 
 
-#### Graficas PCA
 
 
-**Variables categoricas**
 
 ```{r}
 #Grafica del Bracito 
-fviz_eig(pca, addlabels = TRUE, ylim = c(0, 100))
+#fviz_eig(pca, addlabels = TRUE, ylim = c(0, 100))
 ```
-**Variables continuas**
+
 
 ```{r}
 #Grafica del Bracito 
-fviz_eig(pca2, addlabels = TRUE, ylim = c(0, 100))
+#fviz_eig(pca2, addlabels = TRUE, ylim = c(0, 100))
 ```
 
 
 
+### Contribución de variables a los componentes principales
 
-#### Graficas aporte cada componenete 
+Al analizar la contribución de las variables en los **componentes categóricos**, se observa que las más relevantes en el **primer componente** son:  
+- **Historial familiar con obesidad**  
+- **NObesity** (nivel de obesidad)  
+- **CAEC** (consumo de alimentos entre comidas principales)  
+- **FAVC** (consumo de comida con alto contenido calórico)  
+- **SMOKE** (hábito de fumar)  
+- **Género**
+
+En conjunto, estas variables reflejan los factores **genéticos, de hábitos alimenticios y de estilo de vida** que suelen tener un papel determinante en la obesidad.  
+
+En el caso de las **variables continuas**, el **primer componente** está dominado por:  
+- **Altura**  
+- **Peso**  
+- **CH2O** (consumo de agua al día)  
+- **NCP** (número de comidas principales)  
+- **FAF** (frecuencia de actividad física)  
+
+Estos resultados indican que las dimensiones más relevantes en el espacio continuo tienen que ver con la **constitución física** de los participantes y algunos aspectos de **hábitos de vida** relacionados con la salud.  
+
+El **segundo componente** incorpora principalmente la **edad** y el **tiempo frente a dispositivos electrónicos (TUE)**, mostrando la importancia de factores asociados al **estilo de vida moderno**.  
+
+En resumen, los resultados del PCA sugieren que:  
+- En las **variables categóricas** predominan los factores familiares y de hábitos alimenticios.  
+- En las **variables continuas** destacan las características físicas básicas, acompañadas de ciertos comportamientos de salud.  
+
+
 
 ***Categoricas***
 
@@ -269,6 +384,8 @@ g23 <- fviz_contrib(pca2, choice = "var", axes = 3) + ggtitle("Contribucion al c
 
 ```
 
+
+### Cluster con PCA
 
 
 ```{r}
@@ -298,19 +415,13 @@ scatterplot_pca <- function(df, pca, texto){
 ```
 
 
+Aunque el PCA y el número de observaciones no permiten una separación completamente clara entre los grupos, se aprecia cierta **tendencia de ordenamiento en el segundo componente (eje Y)**.  
 
--------------------------- 
-***Ver que mas graficas trabajo el profe y agregarlas, 
+En particular:  
+- Los pacientes con **peso insuficiente** y **peso normal** tienden a ubicarse en la parte inferior del gráfico.  
+- Conforme ascendemos en el eje Y, se observa un patrón en el que los distintos **tipos y niveles de obesidad** comienzan a ordenarse de manera progresiva.  
 
-
-
-## TSNe
-
-
-
-
-
-
+Este comportamiento sugiere que los **componentes principales capturan información relevante sobre el grado de obesidad**, aunque la superposición entre grupos indica que no es posible realizar una clasificación perfecta únicamente con estos dos componentes.
 
 
 ```{r}
@@ -332,7 +443,7 @@ fviz_pca_var(pca, col.var = "cos2",
 
 
 
-
+## TSNe
 
 
 
