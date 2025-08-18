@@ -6,7 +6,12 @@ output: html_document
 
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+	warning = FALSE,
+	error = F
+)
 
 #Ruta de los datos en caso de que requiera
 
@@ -423,24 +428,53 @@ En particular:
 
 Este comportamiento sugiere que los **componentes principales capturan información relevante sobre el grado de obesidad**, aunque la superposición entre grupos indica que no es posible realizar una clasificación perfecta únicamente con estos dos componentes.
 
+### Interpretación del PCA (Biplot)
+
+**Variables continuas**
 
 ```{r}
 fviz_pca_var(pca2, col.var = "cos2", 
-             geom.var = "arrow", 
+             geom.var = c("arrow", "text"), 
              labelsize = 2, 
              repel = FALSE)
 ```
 
 
+En el **primer componente (Dim1, 22.6% de varianza)**, las variables con mayor aporte son **altura**, **peso** y, en menor medida, la **CH2O**.  
+Esto es coherente, ya que a mayor altura suele observarse un mayor peso, además, la **FAF (frecuencia de actividad física)** también aparece como una variable relevante, mostrando la importancia de los hábitos de ejercicio en este componente.
 
-```{r}
+En el **segundo componente (Dim2, 18.7% de varianza)**, se aprecia una fuerte correlación negativa entre la **edad** y el **tiempo de uso de dispositivos electrónicos (TUE)**.  
+Asimismo, destacan correlaciones negativas entre el **peso** y la **FAF** (actividad física), y entre el **peso** y **CH2O** (consumo de agua).  
+Esto indica que, a menor frecuencia de actividad física y menor consumo de agua, el peso tiende a ser más elevado.  
+
+Por último, también se observa la relación entre **edad y peso**, lo cual es consistente con la literatura: a mayor edad, existe mayor probabilidad de presentar sobrepeso u obesidad.  
+
+En conjunto, el PCA refleja tanto la influencia de factores **biológicos** (edad, peso, altura) como de **hábitos de vida** (ejercicio, consumo de agua, tiempo frente a pantallas) en la variabilidad de los datos.
+
+```{r  fig.width=15, fig.height=10}
 fviz_pca_var(pca, col.var = "cos2", 
-             geom.var = "arrow", 
+             geom.var =c("arrow", "text"), 
              labelsize = 2, 
              repel = FALSE) +
   labs(title = "Círculo de correlaciones (PCA)")
 ```
 
+### Interpretación del PCA (variables categóricas)
+
+En el **primer componente (Dim1, 26.4% de varianza)** se observa una fuerte relación entre:  
+- **NObesity** (tipo de obesidad)  
+- **Historial familiar con obesidad**  
+- **Género**  
+
+Estos factores sugieren que tanto los **antecedentes familiares** como el **sexo** pueden influir en la predisposición a desarrollar sobrepeso u obesidad.  
+
+Por otro lado, también se destacan las variables:  
+- **CAEC**: consumo de alimentos entre comidas principales  
+- **FAVC**: frecuencia de consumo de comida con alto contenido calórico  
+
+Lo cual refuerza la relevancia de los **hábitos alimenticios** en la clasificación de los niveles de obesidad.  
+
+En conjunto, los resultados muestran que el PCA capta tanto **factores biológicos** (género, antecedentes familiares) como **conductuales** (alimentación) que están estrechamente asociados con el estado de obesidad.
 
 
 ## TSNe
