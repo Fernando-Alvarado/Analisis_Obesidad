@@ -498,30 +498,63 @@ X_nd <- X[keep, , drop = FALSE]
 y_nd <- data$NObeyesdad[keep]
 
 
-tsne <- Rtsne(X_nd, dims = 2,is_distance = FALSE, perplexity = 50,theta=0.5, max_iter = 5000, verbose = TRUE)
+#Funcion para graficar varios modelos TSNE
+graficaTSNE <- function(perp){
+    tsne <- Rtsne(X_nd, dims = 2,is_distance = FALSE, perplexity = perp,theta=0.3, max_iter = 5000, verbose = TRUE)
+    resultados <- as.data.frame(tsne$Y)
+    colnames(resultados) <- c("dim_1", "dim_2")
+    resultados$NObeyesdad <- y_nd
 
+    graph <- ggplot(data = resultados, aes(x = dim_1, y = dim_2, color = NObeyesdad)) +
+      geom_point(size = 1.3, alpha = 0.8) +
+      scale_color_manual(
+      values = c(
+        Insufficient_Weight = "#03BCB7",
+        Normal_Weight       = "#85D713",
+        Obesity_Type_I      = "#F0B000",
+        Obesity_Type_II     = "#FF6800",
+        Obesity_Type_III    = "#FF4408",
+        Overweight_Level_I  = "#C90822",
+        Overweight_Level_II = "#800026"
+      ),
+      drop = FALSE
+    ) +
+    theme_bw()
+    return(graph)
+}
 
-resultados <- as.data.frame(tsne$Y)
-colnames(resultados) <- c("dim_1", "dim_2")
-resultados$NObeyesdad <- y_nd
-
-ggplot(data = resultados, aes(x = dim_1, y = dim_2, color = NObeyesdad)) +
-  geom_point(size = 1.3, alpha = 0.8) +
-  scale_color_manual(
-    values = c(
-      Insufficient_Weight = "#03BCB7",
-      Normal_Weight       = "#85D713",
-      Obesity_Type_I      = "#F0B000",
-      Obesity_Type_II     = "#FF6800",
-      Obesity_Type_III    = "#FF4408",
-      Overweight_Level_I  = "#C90822",
-      Overweight_Level_II = "#800026"
-    ),
-    drop = FALSE
-  ) +
-  theme_bw()
 
 ```
+
+
+```{r}
+
+secuancia <- seq(from = 5, to = 105, by = 10)
+secuencia2 <- seq(from = 40, to=46, by =2)
+secper <- c(56,57,58,59,61,62,63,64,66,67,69)
+
+rutabase <- getwd()
+
+ruta <- paste0(rutabase, "/FiguresTSNE/")
+
+
+for(i in secper
+    ){
+
+  nombre <- paste0(ruta,"./TSNE_perp_" , i , ".png")
+  
+  png(nombre)
+  p <- graficaTSNE( i)  # que esta función devuelva un ggplot
+  print(p)  
+  dev.off()
+  
+}
+
+
+
+
+```
+
 
 
 ```{r  fig.width=15, fig.height=10}
