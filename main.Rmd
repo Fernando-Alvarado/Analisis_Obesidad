@@ -32,7 +32,7 @@ library(esquisse)
 library(skimr)
 library(corrplot)
 library(vcd)
-
+library(Rtsne)
 
 ```
 
@@ -451,7 +451,7 @@ Por último, también se observa la relación entre **edad y peso**, lo cual es 
 
 En conjunto, el PCA refleja tanto la influencia de factores **biológicos** (edad, peso, altura) como de **hábitos de vida** (ejercicio, consumo de agua, tiempo frente a pantallas) en la variabilidad de los datos.
 
-```{r  fig.width=15, fig.height=10}
+```{r }
 fviz_pca_var(pca, col.var = "cos2", 
              geom.var =c("arrow", "text"), 
              labelsize = 2, 
@@ -481,8 +481,80 @@ En conjunto, los resultados muestran que el PCA capta tanto **factores biológic
 
 
 
+```{r Transformacion_TSNE,  fig.width=15, fig.height=10}
+
+set.seed(42)
+
+# X = features (ya con dummies), y = etiqueta para colorear
+X <- data %>% select(-NObeyesdad)
+X <- model.matrix(~ . - 1, data = X) %>% as.data.frame()
+
+# escalar
+X <- scale(X)
+
+# eliminar filas duplicadas y alinear etiquetas
+keep <- !duplicated(X)
+X_nd <- X[keep, , drop = FALSE]
+y_nd <- data$NObeyesdad[keep]
 
 
+tsne <- Rtsne(X_nd, dims = 2,is_distance = FALSE, perplexity = 50,theta=0.5, max_iter = 5000, verbose = TRUE)
+
+
+resultados <- as.data.frame(tsne$Y)
+colnames(resultados) <- c("dim_1", "dim_2")
+resultados$NObeyesdad <- y_nd
+
+ggplot(data = resultados, aes(x = dim_1, y = dim_2, color = NObeyesdad)) +
+  geom_point(size = 1.3, alpha = 0.8) +
+  scale_color_manual(
+    values = c(
+      Insufficient_Weight = "#03BCB7",
+      Normal_Weight       = "#85D713",
+      Obesity_Type_I      = "#F0B000",
+      Obesity_Type_II     = "#FF6800",
+      Obesity_Type_III    = "#FF4408",
+      Overweight_Level_I  = "#C90822",
+      Overweight_Level_II = "#800026"
+    ),
+    drop = FALSE
+  ) +
+  theme_bw()
+
+```
+
+
+```{r  fig.width=15, fig.height=10}
+#Usanso PCA y TSNe
+pca <- prcomp(x = X_nd)
+resultados <- as.data.frame(pca$x[, 1:2])
+resultados$NObeyesdad <- y_nd
+# Asegura que la clase sea factor y con niveles en el orden que quieres
+resultados$NObeyesdad <- factor(
+  resultados$NObeyesdad,
+  levels = c("Insufficient_Weight","Normal_Weight","Obesity_Type_I",
+             "Obesity_Type_II","Obesity_Type_III",
+             "Overweight_Level_I","Overweight_Level_II")
+)
+
+ggplot(resultados, aes(PC1, PC2, color = NObeyesdad)) +
+  geom_point(size = 1.3, alpha = 0.8) +
+  scale_color_manual(
+    values = c(
+      Insufficient_Weight = "#03BCB7",
+      Normal_Weight       = "#85D713",
+      Obesity_Type_I      = "#F0B000",
+      Obesity_Type_II     = "#FF6800",
+      Obesity_Type_III    = "#FF4408",
+      Overweight_Level_I  = "#C90822",
+      Overweight_Level_II = "#800026"
+    ),
+    drop = FALSE  # conserva colores aunque algún nivel no aparezca
+  ) +
+  theme_bw()
+
+
+```
 
 
 
