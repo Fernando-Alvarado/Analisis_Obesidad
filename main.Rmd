@@ -38,10 +38,15 @@ library(Rtsne)
 
 ```{r Data}
 
-data <- read.csv(here("Data", "Obesity.csv"))
+data <- read.csv(here("Data", "Obesity_clean.csv"))
 
 
-#head(data)
+data$FCVC <- as.factor(data$FCVC)
+data$NCP  <- as.factor(data$NCP)
+data$CH2O <- as.factor(data$CH2O)
+data$FAF  <- as.factor(data$FAF)
+data$TUE  <- as.factor(data$TUE)
+
 
 
 
@@ -129,11 +134,11 @@ var_numeric <- data %>% dplyr::select(where(is.numeric), NObeyesdad)
 vars_cat <- data %>%  dplyr::select(where(is.factor))
 
 
-summary(var_numeric)
+summary(vars_cat)
 
 ```
 
-```{r Graficas_Bonitas1,  fig.width=15, fig.height=10}
+```{r Graficas_Bonitas1,  fig.width=15, fig.height=17}
 entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad", "FCVC", "NCP", "CH2O", "FAF", "TUE" ) #Agregue las que faltaban, solo es cuestion de limpiar las variables
 graficasCat <- list()
 
@@ -143,8 +148,8 @@ for (i in entradas) {
  p <- ggplot(data, aes_string(x = i, fill = "NObeyesdad")) +
   geom_bar(position = "fill") +
   geom_text(
-     stat = "prop",
-    aes(label = scales::percent(..prop..), group = NObeyesdad),
+     stat = "count",
+    aes(label = scales::percent(..count..), group = NObeyesdad),
     position = position_fill(vjust = 0.5),
     size = 3
   ) +
@@ -315,14 +320,14 @@ En ambos casos, se decidió emplear únicamente **dos componentes principales**,
 
 ```{r pca_numericas}
 pca2 <- prcomp(var_numeric, scale. = TRUE)
-#summary(pca2)
+summary(pca2)
 ```
 
 
 ```{r pca_categoricas}
 nombresCat <- rownames(cramer_mat)
 pca <- prcomp(cramer_mat, scale. = TRUE)
-#summary(pca)
+summary(pca)
 ```
 
 
@@ -331,13 +336,13 @@ pca <- prcomp(cramer_mat, scale. = TRUE)
 
 ```{r}
 #Grafica del Bracito 
-#fviz_eig(pca, addlabels = TRUE, ylim = c(0, 100))
+fviz_eig(pca, addlabels = TRUE, ylim = c(0, 100))
 ```
 
 
 ```{r}
 #Grafica del Bracito 
-#fviz_eig(pca2, addlabels = TRUE, ylim = c(0, 100))
+fviz_eig(pca2, addlabels = TRUE, ylim = c(0, 100))
 ```
 
 
@@ -560,26 +565,26 @@ graficaTSNE <- function(perp){
 
 ```{r}
 
-#secuancia <- seq(from = 5, to = 105, by = 10)
-#secuencia2 <- seq(from = 40, to=46, by =2)
-#secper <- c(56,57,58,59,61,62,63,64,66,67,69)
+secuencia  <- seq(from = 5, to = 175, by = 10)
+secuencia2 <- seq(from = 40, to = 46, by = 2)
+secper     <- c(56, 57, 58, 59, 61, 62, 63, 64, 66, 67, 69)
 
-#rutabase <- getwd()
+unidas <- c(secuencia, secuencia2, secper)
+unidas
+rutabase <- getwd()
 
-#ruta <- paste0(rutabase, "/FiguresTSNE/")
+ruta <- paste0(rutabase, "/FiguresTSNE/")
 
 
-#for(i in secper
-#    ){
-#
-#  nombre <- paste0(ruta,"./TSNE_perp_" , i , ".png")
-#  
-#  png(nombre)
-#  p <- graficaTSNE( i)  # que esta función devuelva un ggplot
-#  print(p)  
-#  dev.off()
+for(i in unidas){
+
+  nombre <- paste0(ruta,"./TSNE_perp_" , i , ".png")
   
-#}
+  png(nombre)
+  p <- graficaTSNE( i)  # que esta función devuelva un ggplot
+  print(p)  
+  dev.off()
+}
 
 
 
