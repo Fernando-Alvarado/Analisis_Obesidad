@@ -134,38 +134,46 @@ summary(var_numeric)
 ```
 
 ```{r Graficas_Bonitas1,  fig.width=15, fig.height=10}
-entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad" )
+entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad", "FCVC", "NCP", "CH2O", "FAF", "TUE" ) #Agregue las que faltaban, solo es cuestion de limpiar las variables
 graficasCat <- list()
 
 
-for(i in entradas){
-  p <- ggplot(vars_cat) +
-  aes(x = data[[i]], fill = NObeyesdad) +
-  geom_bar() +
-  scale_fill_manual(
-    values = c(Insufficient_Weight = "#03BCB7",
-    Normal_Weight = "#58D713",
-    Obesity_Type_I = "#FFDB0C",
-    Obesity_Type_II = "#FF8600",
-    Obesity_Type_III = "#F44408",
-    Overweight_Level_I = "#C90822",
-    Overweight_Level_II = "#800026")
+for (i in entradas) {
+  print(i)
+ p <- ggplot(data, aes_string(x = i, fill = "NObeyesdad")) +
+  geom_bar(position = "fill") +
+  geom_text(
+     stat = "prop",
+    aes(label = scales::percent(..prop..), group = NObeyesdad),
+    position = position_fill(vjust = 0.5),
+    size = 3
   ) +
-  labs(title = paste0(i, " vs NObesity"), x = i) +
+  scale_fill_manual(values = c(
+    Insufficient_Weight = "#03BCE7",
+    Normal_Weight      = "#58D71D",
+    Obesity_Type_I     = "#FFDB6C",
+    Obesity_Type_II    = "#FFA500",
+    Obesity_Type_III   = "#FF0000",
+    Overweight_Level_I = "#C9082A",
+    Overweight_Level_II= "#800026"
+  )) +
+  labs(title = paste(i, "vs NObesity")) +
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   theme(
-    legend.text = element_text(size = 7),     # Tamaño texto
-    legend.title = element_text(size = 8),    # Tamaño título
-    legend.key.size = unit(0.4, "cm")         # Tamaño recuadros
+    axis.text.x  = element_text(angle = 45, hjust = 1),
+    legend.text  = element_text(size = 7),
+    legend.title = element_text(size = 10),
+    legend.key.size = unit(0.4, "cm")
   )
-  #Haciendo las graficas
-   graficasCat[[length(graficasCat) + 1]] <- p
-
-
+  
+  # Guardar la gráfica en la lista
+  graficasCat[[length(graficasCat) + 1]] <- p
 }
 
-graficasCat[[1]] + graficasCat[[2]] + graficasCat[[3]] + graficasCat[[4]] + graficasCat[[5]] + graficasCat[[6]] + graficasCat[[7]] + graficasCat[[8]] + graficasCat[[9]] + plot_layout(ncol = 3)
+
+
+#  Aqui se suman las gráficas, para imprimirlas juntas
+graficasCat[[1]] + graficasCat[[2]] + graficasCat[[3]] + graficasCat[[4]] + graficasCat[[5]] + graficasCat[[6]] + graficasCat[[7]] + graficasCat[[8]] + graficasCat[[9]] +  graficasCat[[10]] + graficasCat[[11]] + graficasCat[[12]] + graficasCat[[13]] + graficasCat[[14]] + plot_layout(ncol = 3)
 
 
 ```
@@ -173,8 +181,8 @@ En la siguiente gráfica se observa que nuestras clases están **balanceadas**, 
 
 
 
-```{r, Graficas_Bonitas2,  fig.width=15, fig.height=10}
-vars <- c("Age", "Height", "Weight", "FCVC", "NCP", "CH2O", "FAF", "TUE")
+```{r, Graficas_Bonitas2,  fig.width=15, fig.height=4}
+vars <- c("Age", "Height", "Weight")
 graficasNum <- list()
 
 for(i in vars){
@@ -200,7 +208,7 @@ for(i in vars){
   
   graficasNum[[length(graficasNum) + 1]] <- p
 }
-graficasNum[[1]] + graficasNum[[2]] + graficasNum[[3]] + graficasNum[[4]] + graficasNum[[5]] + graficasNum[[6]] + graficasNum[[7]] + graficasNum[[8]] + plot_layout(ncol = 3)
+graficasNum[[1]] + graficasNum[[2]] + graficasNum[[3]]  + plot_layout(ncol = 3)
 
 
 ```
@@ -498,6 +506,29 @@ X_nd <- X[keep, , drop = FALSE]
 y_nd <- data$NObeyesdad[keep]
 
 
+  tsne <- Rtsne(X_nd, dims = 2,is_distance = FALSE, perplexity = 67,theta=0.3, max_iter = 5000, verbose = TRUE)
+    resultados <- as.data.frame(tsne$Y)
+    colnames(resultados) <- c("dim_1", "dim_2")
+    resultados$NObeyesdad <- y_nd
+
+   ggplot(data = resultados, aes(x = dim_1, y = dim_2, color = NObeyesdad)) +
+      geom_point(size = 1.3, alpha = 0.8) +
+      scale_color_manual(
+      values = c(
+        Insufficient_Weight = "#03BCB7",
+        Normal_Weight       = "#85D713",
+        Obesity_Type_I      = "#F0B000",
+        Obesity_Type_II     = "#FF6800",
+        Obesity_Type_III    = "#FF4408",
+        Overweight_Level_I  = "#C90822",
+        Overweight_Level_II = "#800026"
+      ),
+      drop = FALSE
+    ) +
+    theme_bw()
+
+
+
 #Funcion para graficar varios modelos TSNE
 graficaTSNE <- function(perp){
     tsne <- Rtsne(X_nd, dims = 2,is_distance = FALSE, perplexity = perp,theta=0.3, max_iter = 5000, verbose = TRUE)
@@ -529,26 +560,26 @@ graficaTSNE <- function(perp){
 
 ```{r}
 
-secuancia <- seq(from = 5, to = 105, by = 10)
-secuencia2 <- seq(from = 40, to=46, by =2)
-secper <- c(56,57,58,59,61,62,63,64,66,67,69)
+#secuancia <- seq(from = 5, to = 105, by = 10)
+#secuencia2 <- seq(from = 40, to=46, by =2)
+#secper <- c(56,57,58,59,61,62,63,64,66,67,69)
 
-rutabase <- getwd()
+#rutabase <- getwd()
 
-ruta <- paste0(rutabase, "/FiguresTSNE/")
+#ruta <- paste0(rutabase, "/FiguresTSNE/")
 
 
-for(i in secper
-    ){
-
-  nombre <- paste0(ruta,"./TSNE_perp_" , i , ".png")
+#for(i in secper
+#    ){
+#
+#  nombre <- paste0(ruta,"./TSNE_perp_" , i , ".png")
+#  
+#  png(nombre)
+#  p <- graficaTSNE( i)  # que esta función devuelva un ggplot
+#  print(p)  
+#  dev.off()
   
-  png(nombre)
-  p <- graficaTSNE( i)  # que esta función devuelva un ggplot
-  print(p)  
-  dev.off()
-  
-}
+#}
 
 
 
@@ -588,6 +619,8 @@ ggplot(resultados, aes(PC1, PC2, color = NObeyesdad)) +
 
 
 ```
+
+
 
 
 
