@@ -38,7 +38,7 @@ library(Rtsne)
 
 ```{r Data}
 
-data <- read.csv(here("Data", "Obesity_clean.csv"))
+data <- read.csv(here("Data", "Obesity_clean_2.csv"))
 
 
 data$FCVC <- as.factor(data$FCVC)
@@ -149,7 +149,7 @@ for (i in entradas) {
   geom_bar(position = "fill") +
   geom_text(
      stat = "count",
-    aes(label = scales::percent(..count..), group = NObeyesdad),
+    aes(label = scales::percent(after_stat(count / sum(count)), accuracy = 0.1), group = NObeyesdad),
     position = position_fill(vjust = 0.5),
     size = 3
   ) +
@@ -330,20 +330,19 @@ pca <- prcomp(cramer_mat, scale. = TRUE)
 summary(pca)
 ```
 
-
-
-
-
 ```{r}
 #Grafica del Bracito 
 fviz_eig(pca, addlabels = TRUE, ylim = c(0, 100))
 ```
 
 
+
 ```{r}
 #Grafica del Bracito 
 fviz_eig(pca2, addlabels = TRUE, ylim = c(0, 100))
 ```
+
+
 
 
 
@@ -406,7 +405,7 @@ g23 <- fviz_contrib(pca2, choice = "var", axes = 3) + ggtitle("Contribucion al c
 ### Cluster con PCA
 
 
-```{r}
+```{r,  fig.width=10, fig.height=10}
 pca_df <- as.data.frame(pca2$x)# Obtenemos las coordenadas del PCA
 pca_df$NObeyesdad <- data$NObeyesdad # Agregamos la columna de la clase (NObesity) a los datos proyectados
 
@@ -445,7 +444,7 @@ Este comportamiento sugiere que los **componentes principales capturan informaci
 
 **Variables continuas**
 
-```{r}
+```{r,  fig.width=10, fig.height=10}
 fviz_pca_var(pca2, col.var = "cos2", 
              geom.var = c("arrow", "text"), 
              labelsize = 2, 
@@ -464,7 +463,7 @@ Por último, también se observa la relación entre **edad y peso**, lo cual es 
 
 En conjunto, el PCA refleja tanto la influencia de factores **biológicos** (edad, peso, altura) como de **hábitos de vida** (ejercicio, consumo de agua, tiempo frente a pantallas) en la variabilidad de los datos.
 
-```{r }
+```{r , fig.width=10, fig.height=10}
 fviz_pca_var(pca, col.var = "cos2", 
              geom.var =c("arrow", "text"), 
              labelsize = 2, 
@@ -568,6 +567,15 @@ graficaTSNE <- function(perp){
 secuencia  <- seq(from = 5, to = 175, by = 10)
 secuencia2 <- seq(from = 40, to = 46, by = 2)
 secper     <- c(56, 57, 58, 59, 61, 62, 63, 64, 66, 67, 69)
+faltan <- c(
+  7, 9, 11, 13, 17, 19, 21, 23, 27, 29, 31, 33,
+  37, 39, 41, 43, 47, 49, 51, 53,
+  71, 73, 77, 79, 81, 83, 87, 89, 91, 93, 97, 99, 101, 103,
+  107, 109, 111, 113, 117, 119, 121, 123, 127, 129, 131, 133,
+  137, 139, 141, 143, 147, 149, 151, 153, 157, 159, 161, 163,
+  167, 169, 171, 173
+)
+
 
 unidas <- c(secuencia, secuencia2, secper)
 unidas
@@ -576,7 +584,7 @@ rutabase <- getwd()
 ruta <- paste0(rutabase, "/FiguresTSNE/")
 
 
-for(i in unidas){
+for(i in faltan){
 
   nombre <- paste0(ruta,"./TSNE_perp_" , i , ".png")
   
