@@ -17,23 +17,21 @@ knitr::opts_chunk$set(
 #Ruta de los datos en caso de que requiera
 
 #Cargamos nuestras librerías 
-library(ggplot2)
-library(dplyr)
-#Librerias necesarias
-library(tidyverse)
-library(ggplot2)
+# Cargamos nuestras librerías
+library(tidyverse)     # ya incluye dplyr, ggplot2, readr, etc.
 library(factoextra)
-library(dplyr)
 library(esquisse)
 library(scatterplot3d)
-library(factoextra)
 library(patchwork)
 library(here)
-library(esquisse)
 library(skimr)
 library(corrplot)
 library(vcd)
 library(Rtsne)
+library(ggsci)    
+library(psych)     
+library(grid) 
+
 
 ```
 
@@ -136,50 +134,48 @@ vars_cat <- data %>%  dplyr::select(where(is.factor))
 
 ```
 
-```{r Graficas_Bonitas1,  fig.width=15, fig.height=17}
-entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad", "FCVC", "NCP", "CH2O", "FAF", "TUE" ) #Agregue las que faltaban, solo es cuestion de limpiar las variables
-graficasCat <- list()
 
+```{r Graficas_Bonitas1_pro, fig.width=15, fig.height=17}
+# Repite las gráficas con paleta ggsci (sin tocar las originales)
+entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad", "FCVC", "NCP", "CH2O", "FAF", "TUE" )
+entradas_pro <- setdiff(entradas, "NObeyesdad")
+plots_pro <- list()
 
-for (i in entradas) {
-  print(i)
- p <- ggplot(data, aes_string(x = i, fill = "NObeyesdad")) +
-  geom_bar(position = "fill") +
+for (v in entradas_pro) {
+  if (!v %in% names(data)) next
+ plots_pro[[length(plots_pro)+1]] <-
+  ggplot(data, aes(x = factor(data[[v]]), fill = NObeyesdad)) +
+  geom_bar(position = "fill", width = 0.9, color = "white", linewidth = 0.2) +
   geom_text(
-     stat = "count",
-    aes(label = scales::percent(after_stat(count / sum(count)), accuracy = 0.1), group = NObeyesdad),
-    position = position_fill(vjust = 0.5),
-    size = 3
+    stat = "count",
+    aes(label = scales::percent(after_stat(count/sum(count)), accuracy = 0.01)),
+    position = position_fill(vjust = 0.5), size = 2.2, lineheight = 0.9
   ) +
-  scale_fill_manual(values = c(
-    Insufficient_Weight = "#03BCE7",
-    Normal_Weight      = "#58D71D",
-    Obesity_Type_I     = "#FFDB6C",
-    Obesity_Type_II    = "#FFA500",
-    Obesity_Type_III   = "#FF0000",
-    Overweight_Level_I = "#C9082A",
-    Overweight_Level_II= "#800026"
-  )) +
-  labs(title = paste(i, "vs NObesity")) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  ggsci::scale_fill_npg(name = "Nivel de obesidad", drop = FALSE) +  # define el nombre aquí
+  labs(title = paste0(v, " vs NObeyesdad"), x = v, y = "Proporción") +
   theme_minimal() +
   theme(
-    axis.text.x  = element_text(angle = 45, hjust = 1),
-    legend.text  = element_text(size = 7),
-    legend.title = element_text(size = 10),
-    legend.key.size = unit(0.4, "cm")
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 35, hjust = 1)
   )
-  
-  # Guardar la gráfica en la lista
-  graficasCat[[length(graficasCat) + 1]] <- p
 }
 
+wrap_plots(plots_pro, ncol = 3) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "right",       # ahora a la derecha
+    legend.direction = "vertical",   # lista vertical
+    legend.justification = "center",
+    legend.title = element_text(size = 9),
+    legend.text  = element_text(size = 8)
+  )
 
-
-#  Aqui se suman las gráficas, para imprimirlas juntas
-graficasCat[[1]] + graficasCat[[2]] + graficasCat[[3]] + graficasCat[[4]] + graficasCat[[5]] + graficasCat[[6]] + graficasCat[[7]] + graficasCat[[8]] + graficasCat[[9]] +  graficasCat[[10]] + graficasCat[[11]] + graficasCat[[12]] + graficasCat[[13]] + graficasCat[[14]] + plot_layout(ncol = 3)
 
 
 ```
+
+
 En la gráfica anterior se observa cómo se distribuyen los diferentes **tipos de obesidad** dentro de nuestras variables categóricas.  
 En cuanto al **género**, tanto hombres como mujeres presentan obesidad en distintas categorías, aunque en los hombres parece haber una proporción ligeramente mayor en obesidad tipo I y II, lo que podría sugerir una predisposición distinta según el sexo.  
 
@@ -188,41 +184,59 @@ De manera similar, los participantes con **antecedentes familiares de sobrepeso*
 
 Finalmente, la **actividad física (FAF)** muestra un patrón consistente: quienes realizan ejercicio con mayor frecuencia tienden a tener menor obesidad, mientras que los participantes más **sedentarios concentran los valores más altos de obesidad tipo II y III**.
 
+```{r, Graficas_Bonitas2,  fig.width=15, fig.height=8}
+df_long_num <- data %>%
+  dplyr::select(all_of(c("Age","Height","Weight","NObeyesdad"))) %>%
+  tidyr::pivot_longer(cols = c("Age","Height","Weight"),
+                      names_to = "Variable", values_to = "Valor")
 
+boxplots <- ggplot(df_long_num, aes(x = NObeyesdad, y = Valor, fill = NObeyesdad)) +
+  geom_boxplot(notch = TRUE, outlier.shape = 21, outlier.size = 1.5,
+               outlier.alpha = 0.35, width = 0.7) +
+  geom_jitter(aes(color = NObeyesdad), width = 0.15, alpha = 0.12,
+              size = 0.7, show.legend = FALSE) +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 3) +
+  ggsci::scale_fill_npg(drop = FALSE) +
+  ggsci::scale_color_npg(drop = FALSE) +
+  labs(title = "Boxplots por variable numérica vs NObeyesdad",
+       x = NULL, y = NULL) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)   # ← rota etiquetas X
+  )
 
-```{r, Graficas_Bonitas2,  fig.width=15, fig.height=4}
+#Graficas de barras
+pal_scale <- ggsci::scale_fill_npg(name = "NObesity", drop = FALSE)
+
+class_levels <- c("Insufficient_Weight","Normal_Weight",
+                  "Overweight_Level_I","Overweight_Level_II",
+                  "Obesity_Type_I","Obesity_Type_II","Obesity_Type_III")
+var_numeric$NObeyesdad <- factor(var_numeric$NObeyesdad, levels = class_levels)
+
 vars <- c("Age", "Height", "Weight")
 graficasNum <- list()
 
-for(i in vars){
-  p <- ggplot(var_numeric) +
-  aes_string(x = i, fill = "NObeyesdad") +
-  geom_histogram(bins = 30L) +
-  scale_fill_manual(
-    values = c(Insufficient_Weight = "#03BCB7",
-    Normal_Weight = "#58D713",
-    Obesity_Type_I = "#FFDB0C",
-    Obesity_Type_II = "#FF8600",
-    Obesity_Type_III = "#F44408",
-    Overweight_Level_I = "#C90822",
-    Overweight_Level_II = "#800026")
-  ) +
-  labs(title = paste0(i, " vs NObesity"), x = i) +
-  theme_minimal() +
-  theme(
-    legend.text = element_text(size = 7),     # Tamaño texto
-    legend.title = element_text(size = 8),    # Tamaño título
-    legend.key.size = unit(0.4, "cm")         # Tamaño recuadros
+for (i in vars) {
+  # Opción A: histograma apilado (tu comportamiento actual)
+  p <- ggplot(var_numeric, aes_string(x = i, fill = "NObeyesdad")) +
+    geom_histogram(bins = 30L, color = "white", linewidth = 0.2) +
+    pal_scale +
+    labs(title = paste0(i, " vs NObesity"), x = i, y = "Conteo") +
+    theme_minimal(base_size = 12) +
+     theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 35, hjust = 1)
   )
-  
-  graficasNum[[length(graficasNum) + 1]] <- p
+graficasNum[[length(graficasNum) + 1]] <- p
 }
-graficasNum[[1]] + graficasNum[[2]] + graficasNum[[3]]  + plot_layout(ncol = 3)
 
+# Patchwork
+(graficasNum[[1]] + graficasNum[[2]] + graficasNum[[3]] + patchwork::plot_layout(ncol = 3, guides = "collect"))/ boxplots 
 
 ```
 
-En la siguiente gráfica se muestra la distribución de las **variables continuas**.  
+
+En la siguiente gráfica se muestra la distribución y los box plots de las **variables continuas** .  
 Podemos observar que la mayoría de los participantes en el estudio son **jóvenes entre 20 y 25 años**.  
 Asimismo, la estatura más frecuente se concentra en el rango de **1.60 a 1.80 metros**.  
 
@@ -230,6 +244,9 @@ En cuanto al **peso**, se distinguen claramente tres patrones:
 - Los individuos con **peso insuficiente** se agrupan en valores menores a 50 kg.  
 - El **peso normal** se concentra entre 50 y 80 kg.  
 - A partir de los **80 kg** se observa una mayor proporción de participantes con **sobrepeso y distintos tipos de obesidad**, lo que confirma el peso corporal como el principal factor de diferenciación entre categorías de obesidad.
+
+Analizando los **box plots**, se observa que la **edad** no es un factor diferenciador, ya que los tres tipos de obesidad se concentran en el mismo rango de **20 a 30 años**.  
+De manera similar, la **altura** se distribuye principalmente en el intervalo de **1.60 a 1.80 metros**, lo que indica que esta variable tampoco discrimina entre los diferentes niveles de obesidad.
 
 
 ### Análisis de correlación
@@ -243,7 +260,7 @@ El uso de ambos métodos cuenta con sustento teórico: la correlación de Pearso
 
 De esta forma, se obtiene una visión más completa de las posibles relaciones entre las variables de estudio, considerando tanto las continuas como las categóricas.
 
-```{r Correlacion_Continueas,  fig.width=6, fig.height=6,  results='hide'}
+```{r Correlacion_Continueas,  fig.width=4, fig.height=4,  results='hide'}
 
 var_numeric <- var_numeric %>% dplyr::select(-NObeyesdad )
 
@@ -260,31 +277,33 @@ Asimismo, se aprecia una **relación positiva entre la edad y el peso** (correla
 
 
 
-```{r Correlacion_categoricas,  fig.width=10, fig.height=10, results='hide'}
-# Obtener nombres de columnas categóricas
+```{r Correlacion_categoricas,  fig.width=7, fig.height=7, results='hide'}
+
 cat_cols <- names(vars_cat)
-
-# Crear matriz vacía
-cramer_mat <- matrix(NA, nrow = length(cat_cols), ncol = length(cat_cols),
+cramer_mat <- matrix(NA_real_, length(cat_cols), length(cat_cols),
                      dimnames = list(cat_cols, cat_cols))
-
-# Calcular Cramér's V
 for (i in cat_cols) {
   for (j in cat_cols) {
-    cramer_mat[i, j] <- suppressWarnings(assocstats(table(vars_cat[[i]], vars_cat[[j]]))$cramer)
+    cramer_mat[i, j] <- suppressWarnings(
+      vcd::assocstats(table(vars_cat[[i]], vars_cat[[j]]))$cramer
+    )
   }
 }
-round(cramer_mat, 2)
+diag(cramer_mat) <- 1
 
-
-#Haciendo la correlacion Variables categoricas
-corrplot(cramer_mat,
-         method = "circle",
-         type = "upper",
-         tl.col = "black",
-         tl.srt = 45,
-         tl.cex = 0.6
-         # addCoef.col = "black"  ← esto lo eliminas o comentas
+corrplot(
+  cramer_mat,
+  method        = "circle",
+  type          = "upper",
+  tl.col        = "black",
+  tl.srt        = 45,
+  tl.cex        = 0.7,
+  addCoef.col   = "black",   # muestra los valores
+  number.cex    = 0.6,
+  number.digits = 2,
+  is.corr       = FALSE,     # escala 0..1 (no -1..1)
+  # paleta SECUENCIAL profesional
+  col = colorRampPalette(c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"))(200)
 )
 
 
@@ -309,40 +328,71 @@ Por lo tanto, estas variables pueden considerarse como **parámetros clave para 
 
 ### Análisis de PCA
 
+```{r pca_compute, fig.width=10, fig.height=4}
+
+num_cols <- c("Age","Height","Weight")
+stopifnot(all(num_cols %in% names(data)))
+X <- scale(data[, num_cols, drop = FALSE], center = TRUE, scale = TRUE)
+pca2 <- prcomp(X, center = FALSE, scale. = FALSE)
+
+
+
+vars_cat_tmp <- data %>% dplyr::select(where(is.factor)) %>% as.data.frame()
+cc <- names(vars_cat_tmp)
+cramer_mat <- matrix(NA_real_, length(cc), length(cc), dimnames = list(cc, cc))
+for (i in cc) for (j in cc) {
+    cramer_mat[i, j] <- suppressWarnings(
+      vcd::assocstats(table(vars_cat_tmp[[i]], vars_cat_tmp[[j]]))$cramer
+    )
+  }
+diag(cramer_mat) <- 1
+pca <- prcomp(cramer_mat, scale. = TRUE)
+
+
+```
+
+**Objetivo.** Preparar los objetos `pca` (categóricas, vía matriz de asociación) y `pca2` (continuas), generar los *scree plots* y dejar listos los resultados para las subsecciones posteriores (contribuciones, biplots, clústeres con PCA, etc.).
+
 Con base en el análisis de correlación y asociación realizado previamente, se aplicó la técnica de **Análisis de Componentes Principales (PCA)** con el objetivo de **reducir la dimensionalidad** de los datos y facilitar la interpretación de las variables.
 
-En el caso de las **variables numéricas**, el primer componente principal explica un **49.68%** de la varianza total, mientras que el segundo componente aporta un **34.05%** adicional.  
-En conjunto, los dos primeros componentes acumulan un **83.71%** de la varianza explicada, lo que permite representar la información de manera más compacta, pasando de 3 variables a 2 componentes principales.  
-
-Por otro lado, el análisis de PCA aplicado a las **variables categóricas transformadas** muestra un rendimiento más limitado: los dos primeros componentes explican únicamente un **30.83%** de la varianza acumulada. Incluso al considerar un tercer componente, la proporción de varianza explicada se eleva solo hasta un **40.95%**, lo que refleja la mayor dispersión de la información en este tipo de variables.  
-
-En ambos casos, se decidió emplear únicamente **dos componentes principales**, ya que esto permite **visualizar los datos en un plano bidimensional**, identificar posibles **clústeres** y analizar la contribución de las variables a dichos componentes.
 
 
-```{r pca_categoricas}
-#nombresCat <- rownames(cramer_mat)
-#pca <- prcomp(cramer_mat, scale. = TRUE)
-#summary(pca)
+```{r,  fig.width=15, fig.height=4}
+p_scree_num <- factoextra::fviz_eig(pca2, addlabels = TRUE) +
+  labs(
+    title = "Varianza explicada – PCA (continuas)",
+    x = "Componentes principales",
+    y = "Varianza explicada (%)"
+  ) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+p_scree_cat <- factoextra::fviz_eig(pca, addlabels = TRUE) +
+  labs(
+    title = "Varianza explicada – PCA (categóricas)",
+    x = "Componentes principales",
+    y = "Varianza explicada (%)"
+  ) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+(p_scree_cat + p_scree_num) +
+  patchwork::plot_annotation(
+    title = "Comparación de varianza explicada por PCA",
+    subtitle = "Categóricas (Cramér’s V) vs. Continuas (Pearson)",
+    tag_levels = "A"
+  )
+
 ```
 
-```{r pca_numericas}
-#pca2 <- prcomp(var_numeric, scale. = TRUE)
-#summary(pca2)
-```
+En el caso de las **variables numéricas**, el primer componente principal explica un **49.7%** de la varianza total, mientras que el segundo componente aporta un **34.1%** adicional.  
+En conjunto, los dos primeros componentes acumulan un **83.71%** de la varianza explicada, lo que permite representar la información de forma compacta y reducir la dimensionalidad de 3 variables a solo 2 componentes.
 
+Por otro lado, el PCA aplicado a las **variables categóricas transformadas** muestra un rendimiento más limitado: los dos primeros componentes explican únicamente un **30.3%** de la varianza acumulada. Incluso considerando un tercer componente, la varianza explicada asciende solo a un **40.9%**, lo que refleja la mayor dispersión e independencia entre estas variables.
 
-```{r}
-#Grafica del Bracito 
-#fviz_eig(pca, addlabels = TRUE, ylim = c(0, 100))
-```
-
-
-
-```{r}
-#Grafica del Bracito 
-#fviz_eig(pca2, addlabels = TRUE, ylim = c(0, 100))
-```
-
+En ambos casos, se decidió emplear únicamente **dos componentes principales**, ya que esto permite **visualizar los datos en un plano bidimensional**, identificar posibles **clústeres** y analizar la **contribución de cada variable** a los componentes.
 
 
 
@@ -397,30 +447,20 @@ En resumen, los resultados del PCA sugieren que:
 ### Cluster con PCA
 
 
-```{r,  fig.width=10, fig.height=10}
-pca_df <- as.data.frame(pca2$x)# Obtenemos las coordenadas del PCA
-pca_df$NObeyesdad <- data$NObeyesdad # Agregamos la columna de la clase (NObesity) a los datos proyectados
+```{r,  fig.width=6, fig.height=6}
+pca_df <- as.data.frame(pca2$x)
+pca_df$NObeyesdad <- data$NObeyesdad
 
-
-
-
-#Creando la funcion para dividir bien a nuestros datos en un scatter plot 
 scatterplot_pca <- function(df, pca, texto){
-  # Scatterplot de PC1 vs PC2
   ggplot(df, aes(x = PC1, y = PC2, color = NObeyesdad)) +
-  geom_point(size = 3, alpha = 0.7) +
-  theme_minimal() +
-  labs(title = texto,
-       x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100,1), "% varianza)"),
-       y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100,1), "% varianza)")) +
-  scale_color_brewer(palette = "Set1")   # paleta de colores bonita
+    geom_point(size = 3, alpha = 0.7) +
+    theme_minimal() +
+    labs(title = texto,
+         x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100,1), "% varianza)"),
+         y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100,1), "% varianza)")) +
+    ggsci::scale_color_npg()
 }
-
- scatterplot_pca(pca_df, pca2,  "PCA: separación por NObesity (Continuas)")
-
-#scatterplot_pca(pca_df2, pca,  "PCA: separación por NObesity (Categoricas)")
-
-
+scatterplot_pca(pca_df, pca2,  "PCA: separación por NObesity (Continuas)")
 ```
 
 
@@ -436,7 +476,7 @@ Este comportamiento sugiere que los **componentes principales capturan informaci
 
 **Variables continuas**
 
-```{r,  fig.width=10, fig.height=10}
+```{r,  fig.width=6, fig.height=6}
 fviz_pca_var(pca2, col.var = "cos2", 
              geom.var = c("arrow", "text"), 
              labelsize = 2, 
@@ -465,7 +505,7 @@ Esto indica que el **Componente 2**, se enfoca mas en la edad de los individuos
 
 **Variables categóricas**
 
-```{r , fig.width=10, fig.height=10}
+```{r , fig.width=6, fig.height=6}
 fviz_pca_var(pca, col.var = "cos2", 
              geom.var =c("arrow", "text"), 
              labelsize = 2, 
@@ -499,7 +539,7 @@ Este eje agrupa variables asociadas tanto a la **predisposición genética/hered
 
 
 
-```{r Transformacion_TSNE,  fig.width=15, fig.height=10}
+```{r Transformacion_TSNE, fig.width=10, fig.height=10}
 
 set.seed(42)
 
@@ -523,19 +563,8 @@ y_nd <- data$NObeyesdad[keep]
 
    ggplot(data = resultados, aes(x = dim_1, y = dim_2, color = NObeyesdad)) +
       geom_point(size = 1.3, alpha = 0.8) +
-      scale_color_manual(
-      values = c(
-        Insufficient_Weight = "#03BCB7",
-        Normal_Weight       = "#85D713",
-        Obesity_Type_I      = "#F0B000",
-        Obesity_Type_II     = "#FF6800",
-        Obesity_Type_III    = "#FF4408",
-        Overweight_Level_I  = "#C90822",
-        Overweight_Level_II = "#800026"
-      ),
-      drop = FALSE
-    ) +
-    theme_bw()
+    theme_bw() +
+    ggsci::scale_color_npg()
 
 
 
@@ -604,7 +633,7 @@ graficaTSNE <- function(perp){
 
 
 
-```{r  fig.width=15, fig.height=10}
+```{r  fig.width=10, fig.height=10}
 #Usanso PCA y TSNe
 pca <- prcomp(x = X_nd)
 resultados <- as.data.frame(pca$x[, 1:2])
@@ -619,19 +648,9 @@ resultados$NObeyesdad <- factor(
 
 ggplot(resultados, aes(PC1, PC2, color = NObeyesdad)) +
   geom_point(size = 1.3, alpha = 0.8) +
-  scale_color_manual(
-    values = c(
-      Insufficient_Weight = "#03BCB7",
-      Normal_Weight       = "#85D713",
-      Obesity_Type_I      = "#F0B000",
-      Obesity_Type_II     = "#FF6800",
-      Obesity_Type_III    = "#FF4408",
-      Overweight_Level_I  = "#C90822",
-      Overweight_Level_II = "#800026"
-    ),
-    drop = FALSE  # conserva colores aunque algún nivel no aparezca
-  ) +
-  theme_bw()
+  theme_bw() +
+  ggsci::scale_color_npg()
+
 
 
 ```

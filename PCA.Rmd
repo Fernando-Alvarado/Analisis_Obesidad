@@ -1,0 +1,473 @@
+---
+title: "Obesity – EDA y Reducción de Dimensionalidad"
+author: ""
+date: "`r format(Sys.Date(), '%Y-%m-%d')`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE,
+  error = FALSE,
+  results = 'hide'
+)
+
+
+library(dplyr)
+library(tidyverse)
+library(factoextra)
+library(esquisse)
+library(scatterplot3d)
+library(patchwork)
+library(here)
+library(skimr)
+library(corrplot)
+library(vcd)
+library(Rtsne)
+library(ggsci)    
+library(psych)     
+library(grid) 
+
+
+
+theme_set(theme_minimal(base_size = 12))
+```
+
+```{r Data}
+# (TUS LÍNEAS – no se modifican)
+print(here("Data", "Obesity_clean_2.csv"))
+data <- read.csv(here("Data", "Obesity_clean_2.csv"))
+
+data$FCVC <- as.factor(data$FCVC)
+data$NCP  <- as.factor(data$NCP)
+data$CH2O <- as.factor(data$CH2O)
+data$FAF  <- as.factor(data$FAF)
+data$TUE  <- as.factor(data$TUE)
+```
+
+## Introducción a los Datos
+
+El conjunto de datos **Obesity.csv** contiene información destinada a estimar los niveles de obesidad en función de los hábitos alimentarios, los antecedentes familiares y la condición física de los individuos. La base de datos incluye registros de personas de México, Perú y Colombia, abarcando un total de **2,111 observaciones** y **16 variables** relacionadas con el estilo de vida y la salud.
+
+Las variables recogen información como el género, edad, altura, peso, antecedentes familiares de sobrepeso, frecuencia de consumo de ciertos alimentos, hábitos de hidratación, control de la ingesta calórica, actividad física, tiempo de uso de tecnología, consumo de alcohol y medio de transporte habitual. Además, se incluyen etiquetas que clasifican el nivel de obesidad, desde peso insuficiente hasta obesidad tipo III.
+
+La mayoría de los datos fueron generados mediante técnicas sintéticas, mientras que algunos provienen directamente de usuarios a través de una plataforma web, lo que permite contar con un conjunto diverso y representativo para el análisis.
+
+```{r}
+
+skim(data)
+analisis <- data 
+skim(analisis)
+```
+
+Para este reporte, se limpió la base de datos y a las siguientes variables se les asignaron los niveles descritos:
+
+- **FCVC**: Indica la frecuencia con la que el individuo consume verduras.  
+  Escalas: 1 = **Nunca**, 2 = **A veces**, 3 = **Siempre**.  
+
+- **NCP**: Representa el número de comidas principales consumidas por día.  
+  Escalas: 1 = **1–2 comidas**, 2 = **3 comidas**, 3 = **4 comidas**, 4 = **Más de 4 comidas**.  
+
+- **CH2O**: Describe la cantidad de agua consumida diariamente.  
+  Escalas: 1 = **Menos de 1L**, 2 = **1–2L**, 3 = **Más de 2L**.  
+
+- **FAF**: Señala la frecuencia con la que la persona realiza actividad física.  
+  Escalas: 0 = **Nunca**, 1 = **1–2 veces por semana**, 2 = **2–4 veces por semana**, 3 = **4–5 veces por semana**.  
+
+- **TUE**: Cuantifica el número de horas al día frente a un dispositivo electrónico.  
+  Escalas: 0 = **0–2 horas**, 1 = **3–5 horas**, 2 = **Más de 5 horas**.  
+
+### Estadísticas descriptivas
+
+En este estudio, los participantes presentaron en promedio:  
+
+- **Edad**: 24 años  
+- **Estatura**: 1.70 metros  
+- **Peso**: 86.5 kilogramos  
+- **Comidas principales**: Entre 3 y 4 por día  
+- **Consumo de verduras**: Ocasional  
+- **Consumo de agua**: 1–2 litros diarios  
+- **Actividad física**: 1–2 veces por semana  
+- **Uso de dispositivos electrónicos**: Entre 2 y 5 horas diarias  
+
+A primera vista, estos resultados sugieren que los participantes no mantienen los **mejores hábitos de salud**, dado el consumo moderado de verduras y agua, la baja frecuencia de actividad física y la exposición considerable al uso de dispositivos electrónicos.
+
+```{r, results='hide'}
+
+data <- data %>%
+  mutate(Gender = as.factor(Gender),
+         CALC = as.factor(CALC),
+         FAVC = as.factor(FAVC),
+         SCC = as.factor(SCC),
+         SMOKE = as.factor(SMOKE),
+         family_history_with_overweight = as.factor(family_history_with_overweight),
+         CAEC = as.factor(CAEC),
+         MTRANS = as.factor(MTRANS),
+         NObeyesdad = as.factor(NObeyesdad))
+```
+
+### Dividiendo los datos en continuos y en categóricos
+
+```{r, results='hide'}
+
+var_numeric <- data %>% dplyr::select(where(is.numeric), NObeyesdad) 
+vars_cat   <- data %>% dplyr::select(where(is.factor))
+```
+
+### Gráficas categóricas (versión original)
+
+```{r Graficas_Bonitas1,  fig.width=15, fig.height=17}
+
+entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad", "FCVC", "NCP", "CH2O", "FAF", "TUE" )
+graficasCat <- list()
+
+for (i in entradas) {
+  print(i)
+  p <- ggplot(data, aes_string(x = i, fill = "NObeyesdad")) +
+    geom_bar(position = "fill") +
+    geom_text(
+      stat = "count",
+      aes(label = scales::percent(after_stat(count / sum(count)), accuracy = 0.1), group = NObeyesdad),
+      position = position_fill(vjust = 0.5),
+      size = 3
+    ) +
+    scale_fill_manual(values = c(
+      Insufficient_Weight = "#03BCE7",
+      Normal_Weight      = "#58D71D",
+      Obesity_Type_I     = "#FFDB6C",
+      Obesity_Type_II    = "#FFA500",
+      Obesity_Type_III   = "#FF0000",
+      Overweight_Level_I = "#C9082A",
+      Overweight_Level_II= "#800026"
+    )) +
+    labs(title = paste(i, "vs NObesity")) +
+    theme_minimal() +
+    theme(
+      axis.text.x  = element_text(angle = 45, hjust = 1),
+      legend.text  = element_text(size = 7),
+      legend.title = element_text(size = 10),
+      legend.key.size = unit(0.4, "cm")
+    )
+  graficasCat[[length(graficasCat) + 1]] <- p
+}
+
+graficasCat[[1]] + graficasCat[[2]] + graficasCat[[3]] + graficasCat[[4]] + graficasCat[[5]] + graficasCat[[6]] + graficasCat[[7]] + graficasCat[[8]] + graficasCat[[9]] +  graficasCat[[10]] + graficasCat[[11]] + graficasCat[[12]] + graficasCat[[13]] + graficasCat[[14]] + plot_layout(ncol = 3)
+```
+
+### Gráficas categóricas (versión “pro” con paleta científica)
+
+```{r Graficas_Bonitas1_pro, fig.width=15, fig.height=17}
+# Repite las gráficas con paleta ggsci (sin tocar las originales)
+entradas_pro <- setdiff(entradas, "NObeyesdad")
+plots_pro <- list()
+
+for (v in entradas_pro) {
+  if (!v %in% names(data)) next
+  plots_pro[[length(plots_pro)+1]] <-
+    ggplot(data, aes(x = factor(.data[[v]]), fill = NObeyesdad)) +
+    geom_bar(position = "fill", width = 0.9, color = "white", linewidth = 0.2) +
+    geom_text(
+      stat = "count",
+      aes(label = scales::percent(after_stat(count/sum(count)), accuracy = 0.01)), # ← 2 decimales
+      position = position_fill(vjust = 0.5),
+      size = 2.2,
+      lineheight = 0.9
+    ) +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+    ggsci::scale_fill_npg(name = "Nivel de obesidad", drop = FALSE) +
+    labs(title = paste(v, "vs NObeyesdad"), x = v, y = "Proporción") +
+    theme_minimal() +
+    theme(
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 35, hjust = 1),
+      legend.position = "bottom",
+      legend.text  = element_text(size = 8),
+      legend.title = element_text(size = 9)
+    )
+}
+
+if (length(plots_pro)) (wrap_plots(plots_pro, ncol = 3, guides = "collect") & theme(legend.position = "bottom"))
+
+```
+
+
+### Gráficas de continuas (versión original)
+
+```{r, Graficas_Bonitas2,  fig.width=15, fig.height=4}
+
+pal_scale <- ggsci::scale_fill_npg(name = "NObesity", drop = FALSE)
+
+class_levels <- c("Insufficient_Weight","Normal_Weight",
+                  "Overweight_Level_I","Overweight_Level_II",
+                  "Obesity_Type_I","Obesity_Type_II","Obesity_Type_III")
+var_numeric$NObeyesdad <- factor(var_numeric$NObeyesdad, levels = class_levels)
+
+vars <- c("Age", "Height", "Weight")
+graficasNum <- list()
+
+for (i in vars) {
+  # Opción A: histograma apilado (tu comportamiento actual)
+  p <- ggplot(var_numeric, aes_string(x = i, fill = "NObeyesdad")) +
+    geom_histogram(bins = 30L, color = "white", linewidth = 0.2) +
+    pal_scale +
+    labs(title = paste0(i, " vs NObesity"), x = i, y = "Conteo") +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      legend.text  = element_text(size = 9),
+      legend.title = element_text(size = 10),
+      legend.key.size = unit(0.4, "cm"),
+      plot.title = element_text(face = "bold")
+    )
+graficasNum[[length(graficasNum) + 1]] <- p
+}
+
+# Patchwork
+graficasNum[[1]] + graficasNum[[2]] + graficasNum[[3]] + patchwork::plot_layout(ncol = 3, guides = "collect")
+
+```
+
+
+```{r}
+
+pal_scale <- ggsci::scale_fill_npg(name = "NObesity", drop = FALSE)
+
+class_levels <- c("Insufficient_Weight","Normal_Weight",
+                  "Overweight_Level_I","Overweight_Level_II",
+                  "Obesity_Type_I","Obesity_Type_II","Obesity_Type_III")
+var_numeric$NObeyesdad <- factor(var_numeric$NObeyesdad, levels = class_levels)
+
+vars <- c("Age", "Height", "Weight")
+graficasNum <- list()
+
+for (i in vars) {
+  p <- ggplot(var_numeric, aes(x = .data[[i]], fill = NObeyesdad)) +
+    geom_histogram(bins = 30L, position = "identity", alpha = 0.45, color = NA) +
+    ggsci::scale_fill_npg(name = "NObesity", drop = FALSE) +
+    labs(title = paste0(i, " vs NObesity"), x = i, y = "Conteo") +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      legend.text  = element_text(size = 9),
+      legend.title = element_text(size = 10),
+      plot.title   = element_text(face = "bold")
+    )
+  graficasNum[[length(graficasNum) + 1]] <- p
+}
+
+graficasNum[[1]] + graficasNum[[2]] + graficasNum[[3]] + patchwork::plot_layout(ncol = 3, guides = "collect")
+
+
+
+```
+
+### Boxplots de continuas por clase (agregado)
+
+```{r boxplots_numericas, fig.width=15, fig.height=5}
+df_long_num <- data %>%
+  dplyr::select(all_of(c("Age","Height","Weight","NObeyesdad"))) %>%
+  tidyr::pivot_longer(cols = c("Age","Height","Weight"),
+                      names_to = "Variable", values_to = "Valor")
+
+ggplot(df_long_num, aes(x = NObeyesdad, y = Valor, fill = NObeyesdad)) +
+  geom_boxplot(notch = TRUE, outlier.shape = 21, outlier.size = 1.5,
+               outlier.alpha = 0.35, width = 0.7) +
+  geom_jitter(aes(color = NObeyesdad), width = 0.15, alpha = 0.12,
+              size = 0.7, show.legend = FALSE) +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 3) +
+  ggsci::scale_fill_npg(drop = FALSE) +
+  ggsci::scale_color_npg(drop = FALSE) +
+  labs(title = "Boxplots por variable numérica vs NObeyesdad",
+       x = NULL, y = NULL) +
+  theme(panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 30, hjust = 1),
+        legend.position = "bottom")
+```
+
+### Análisis de correlación
+
+```{r Correlacion_Continueas,  fig.width=6, fig.height=6,  results='hide'}
+
+var_numeric2 <- var_numeric %>% dplyr::select(-NObeyesdad )
+corrplot(cor(var_numeric2), method = "circle", type = "upper", tl.col = "black", tl.srt = 45, addCoef.col = "black")
+```
+
+```{r Correlacion_categoricas,  fig.width=10, fig.height=10, results='hide'}
+
+
+cat_cols <- names(vars_cat)
+cramer_mat <- matrix(NA_real_, length(cat_cols), length(cat_cols),
+                     dimnames = list(cat_cols, cat_cols))
+for (i in cat_cols) {
+  for (j in cat_cols) {
+    cramer_mat[i, j] <- suppressWarnings(
+      vcd::assocstats(table(vars_cat[[i]], vars_cat[[j]]))$cramer
+    )
+  }
+}
+diag(cramer_mat) <- 1
+
+corrplot(
+  cramer_mat,
+  method        = "circle",
+  type          = "upper",
+  tl.col        = "black",
+  tl.srt        = 45,
+  tl.cex        = 0.7,
+  addCoef.col   = "black",   # muestra los valores
+  number.cex    = 0.6,
+  number.digits = 2,
+  is.corr       = FALSE,     # escala 0..1 (no -1..1)
+  # paleta SECUENCIAL profesional
+  col = colorRampPalette(c("#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"))(200)
+)
+
+
+```
+
+## Análisis de PCA 
+
+**Objetivo.** Preparar los objetos `pca` (categóricas vía matriz de asociación) y `pca2` (continuas), generar *scree plots* y dejar listos los objetos para las subsecciones que ya tienes más abajo (contribuciones, biplots, cluster con PCA, etc.).
+
+```{r pca_compute, fig.width=10, fig.height=4}
+
+num_cols <- c("Age","Height","Weight")
+stopifnot(all(num_cols %in% names(data)))
+X <- scale(data[, num_cols, drop = FALSE], center = TRUE, scale = TRUE)
+pca2 <- prcomp(X, center = FALSE, scale. = FALSE)
+
+
+
+vars_cat_tmp <- data %>% dplyr::select(where(is.factor)) %>% as.data.frame()
+cc <- names(vars_cat_tmp)
+cramer_mat <- matrix(NA_real_, length(cc), length(cc), dimnames = list(cc, cc))
+for (i in cc) for (j in cc) {
+    cramer_mat[i, j] <- suppressWarnings(
+      vcd::assocstats(table(vars_cat_tmp[[i]], vars_cat_tmp[[j]]))$cramer
+    )
+  }
+diag(cramer_mat) <- 1
+pca <- prcomp(cramer_mat, scale. = TRUE)
+
+
+```
+
+```{r pca_categoricas}
+
+summary(pca)
+```
+
+```{r pca_numericas}
+summary(pca2)
+```
+
+```{r}
+p_scree_num <- factoextra::fviz_eig(pca2, addlabels = TRUE) +
+  labs(
+    title = "Varianza explicada – PCA (continuas)",
+    x = "Componentes principales",
+    y = "Varianza explicada (%)"
+  ) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+p_scree_cat <- factoextra::fviz_eig(pca, addlabels = TRUE) +
+  labs(
+    title = "Varianza explicada – PCA (categóricas)",
+    x = "Componentes principales",
+    y = "Varianza explicada (%)"
+  ) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 10)) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"))
+
+(p_scree_cat + p_scree_num) +
+  patchwork::plot_annotation(
+    title = "Comparación de varianza explicada por PCA",
+    subtitle = "Categóricas (Cramér’s V) vs. Continuas (Pearson)",
+    tag_levels = "A"
+  )
+
+```
+
+
+
+
+
+
+
+### Contribución de variables a los componentes principales
+
+```{r,  fig.width=15, fig.height=5}
+
+g1 <- fviz_contrib(pca, choice = "var", axes = 1) + ggtitle("Contribucion al componente 1 (cat)")
+g2 <- fviz_contrib(pca, choice = "var", axes = 2) + ggtitle("Contribucion al componente 2 (cat)")
+g3 <- fviz_contrib(pca, choice = "var", axes = 3) + ggtitle("Contribucion al componente 3 (cat)")
+
+g12 <- fviz_contrib(pca2, choice = "var", axes = 1) + ggtitle("Contribucion al componente 1 (num)")
+g22 <- fviz_contrib(pca2, choice = "var", axes = 2) + ggtitle("Contribucion al componente 2 (num)")
+g23 <- fviz_contrib(pca2, choice = "var", axes = 3) + ggtitle("Contribucion al componente 3 (num)")
+
+(g1 + g2 + g3) / (g12 + g22 + g23)
+```
+
+##### Variables categóricas
+- **Componente 1**: Las variables que más aportan son **NObesity**, historial familiar y género.
+- **Componente 2**: Predominan **FAVC**, **FCVC**, **SCC**.
+- **Componente 3**: Destacan **MTRANS**, **NCP** y **TUE**.
+
+##### Variables numéricas
+- **Componente 1**: **Weight** y **Height** (antropometría).
+- **Componente 2**: **Age**.
+- **Componente 3**: Vuelven a contribuir **Weight/Height**.
+
+### Cluster con PCA (tuyo, usando pca2 ya calculado)
+
+```{r,  fig.width=10, fig.height=10}
+pca_df <- as.data.frame(pca2$x)
+pca_df$NObeyesdad <- data$NObeyesdad
+
+scatterplot_pca <- function(df, pca, texto){
+  ggplot(df, aes(x = PC1, y = PC2, color = NObeyesdad)) +
+    geom_point(size = 3, alpha = 0.7) +
+    theme_minimal() +
+    labs(title = texto,
+         x = paste0("PC1 (", round(summary(pca)$importance[2,1]*100,1), "% varianza)"),
+         y = paste0("PC2 (", round(summary(pca)$importance[2,2]*100,1), "% varianza)")) +
+    ggsci::scale_color_npg()
+}
+scatterplot_pca(pca_df, pca2,  "PCA: separación por NObesity (Continuas)")
+```
+
+### Interpretación del PCA (Biplot)
+
+**Variables continuas**
+
+```{r,  fig.width=10, fig.height=10}
+fviz_pca_var(pca2, col.var = "cos2", 
+             geom.var = c("arrow", "text"), 
+             labelsize = 2, 
+             repel = FALSE) +
+  ggtitle("Círculo de correlaciones (continuas)")
+```
+
+**Variables categóricas**
+
+```{r , fig.width=10, fig.height=10}
+fviz_pca_var(pca, col.var = "cos2", 
+             geom.var =c("arrow", "text"), 
+             labelsize = 2, 
+             repel = FALSE) +
+  labs(title = "Círculo de correlaciones (categóricas)")
+```
+
