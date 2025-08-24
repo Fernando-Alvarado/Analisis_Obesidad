@@ -549,10 +549,17 @@ Este eje agrupa variables asociadas tanto a la **predisposición genética/hered
 
 
 
-## TSNe
+## t-SNE
+
+El **t-SNE** es una técnica de reducción de dimensionalidad que permite representar datos de alta dimensión en un espacio de menor dimensión (generalmente 2D o 3D) para su visualización.  
+El método calcula la probabilidad de que un punto \(x_i\) considere a otro \(x_j\) como su vecino en el espacio original, utilizando una **distribución Gaussiana**.  
+En el espacio reducido, estas relaciones de vecindad se modelan mediante una **distribución t de Student**, lo que permite manejar mejor las diferencias de densidad y evita el problema de *crowding* (amontonamiento de puntos).
+
+Para este análisis se realizaron varias iteraciones probando diferentes valores de **perplexity**, con el fin de observar cómo cambiaba la estructura de los datos y si se formaban *clusters* o agrupaciones más definidas.  
+Posteriormente, se ajustó el hiperparámetro **theta** (de la variante *Barnes-Hut t-SNE*) con el objetivo de balancear **precisión y velocidad** en el cálculo.  
+Finalmente, se incrementó el número de **iteraciones**, otorgando más libertad al algoritmo en el proceso de optimización para lograr una representación más estable y coherente de los datos.
 
 
-# TSNe
 
 ```{r}
 set.seed(42)
@@ -605,6 +612,26 @@ ggplot(tsne_df, aes(tSNE1, tSNE2, colour = NObeyesdad)) +
 
 
 ```
+
+En la gráfica anterior se observa que **no existe una separación perfecta entre los distintos tipos de obesidad**.  
+Sin embargo, pueden identificarse algunas **tendencias de agrupamiento**:  
+
+- La **obesidad tipo III** es la que muestra una mejor separación, concentrándose en la parte inferior izquierda de la gráfica.  
+- El grupo con **peso insuficiente** tiende a aparecer en la parte inferior izquierda, aunque con algunos puntos dispersos hacia el centro.  
+- Los distintos tipos de **sobrepeso** se encuentran más dispersos en la parte superior, lo que indica que no forman un clúster bien definido.  
+- El **peso normal** se distribuye a lo largo de toda la gráfica, lo que confirma la falta de una estructura de agrupamiento clara para esta categoría.  
+
+Esto evidencia que **no existen suficientes relaciones fuertes para separar los tipos de obesidad únicamente con las variables utilizadas**, ya que los grupos se superponen de manera significativa.  
+
+
+Podemos concluir que la obesidad y sus diferentes niveles **no son categorías aisladas**, sino el resultado de la interacción de múltiples características:  
+- **Historial familiar**  
+- **Hábitos alimenticios**  
+- **Estilo de vida (actividad física, tiempo frente a pantallas, transporte)**  
+- **Factores físicos (peso, estatura y edad)**  
+
+El t-SNE refuerza la idea de que la obesidad es un **fenómeno multifactorial y continuo**, más que una clasificación estrictamente discreta.
+
 
 ```{r TSNE_grid_perplexity, fig.width=12, fig.height=8, message=FALSE, warning=FALSE}
 set.seed(42)
@@ -757,7 +784,7 @@ ggplot2::ggplot(d2, ggplot2::aes(tSNE1, tSNE2, colour = group)) +
 ```
 
 
-```{r,  fig.width=10, fig.height=10}
+```{r,  fig.width=10, fig.height=12}
 
 # --- helpers ---
 knn_overlap <- function(Xh, Yh, k = 15, n_eval = 1500) {
