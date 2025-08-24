@@ -14,8 +14,6 @@ knitr::opts_chunk$set(
   results='hide'
 )
 
-#Ruta de los datos en caso de que requiera
-
 #Cargamos nuestras librerías 
 # Cargamos nuestras librerías
 library(tidyverse)     # ya incluye dplyr, ggplot2, readr, etc.
@@ -31,6 +29,15 @@ library(Rtsne)
 library(ggsci)    
 library(psych)     
 library(grid) 
+library(embed)
+library(scattermore)
+library(gganimate)
+library(av)
+library(RANN)  
+library(Rtsne)
+library(cluster)    
+library(knitr)
+library(kableExtra)
 
 
 ```
@@ -40,11 +47,6 @@ library(grid)
 data <- read.csv(here("Data", "Obesity_clean_2.csv"))
 
 
-data$FCVC <- as.factor(data$FCVC)
-data$NCP  <- as.factor(data$NCP)
-data$CH2O <- as.factor(data$CH2O)
-data$FAF  <- as.factor(data$FAF)
-data$TUE  <- as.factor(data$TUE)
 
 
 
@@ -113,8 +115,13 @@ data <- data %>%
          family_history_with_overweight = as.factor(family_history_with_overweight),
          CAEC = as.factor(CAEC),
          MTRANS = as.factor(MTRANS),
-         NObeyesdad = as.factor(NObeyesdad)
-         
+         NObeyesdad = as.factor(NObeyesdad),
+         FCVC <- as.factor(FCVC),
+         NCP  <- as.factor(NCP),
+         CH2O <- as.factor(CH2O),
+         FAF  <- as.factor(FAF),
+         TUE  <- as.factor(TUE)
+        
          
   )
 ```
@@ -136,7 +143,7 @@ vars_cat <- data %>%  dplyr::select(where(is.factor))
 
 
 ```{r,   fig.width=15, fig.height=17}
-
+entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad", "FCVC", "NCP", "CH2O", "FAF", "TUE" )
 graficasCat <- list()
 
 for (i in entradas) {
@@ -545,127 +552,796 @@ Este eje agrupa variables asociadas tanto a la **predisposición genética/hered
 ## TSNe
 
 
+# TSNe
 
-```{r Transformacion_TSNE, fig.width=10, fig.height=10}
-
+```{r}
 set.seed(42)
 
-# X = features (ya con dummies), y = etiqueta para colorear
-X <- data %>% select(-NObeyesdad)
-X <- model.matrix(~ . - 1, data = X) %>% as.data.frame()
+# X = covariables (ya tienes `data` con NObeyesdad factor)
+X <- data %>% dplyr::select(-NObeyesdad)
+X <- model.matrix(~ . - 1, data = X)            # dummies
+X <- scale(X)                                   # escalar
 
-# escalar
-X <- scale(X)
+# Eliminar filas duplicadas (t-SNE no acepta duplicados)
+keep  <- !duplicated(as.data.frame(X))
+X_nd  <- X[keep, , drop = FALSE]
+y_nd  <- droplevels(data$NObeyesdad[keep])
 
-# eliminar filas duplicadas y alinear etiquetas
-keep <- !duplicated(X)
-X_nd <- X[keep, , drop = FALSE]
-y_nd <- data$NObeyesdad[keep]
-
-
-  tsne <- Rtsne(X_nd, dims = 2,is_distance = FALSE, perplexity = 107,theta=0.3, max_iter = 5000, verbose = TRUE)
-    resultados <- as.data.frame(tsne$Y)
-    colnames(resultados) <- c("dim_1", "dim_2")
-    resultados$NObeyesdad <- y_nd
-
-   ggplot(data = resultados, aes(x = dim_1, y = dim_2, color = NObeyesdad)) +
-      geom_point(size = 1.3, alpha = 0.8) +
-    theme_bw() +
-    ggsci::scale_color_npg()
+# Regla de t-SNE: perplexity <= floor((N-1)/3)
+n_eff    <- nrow(X_nd)
+max_perp <- max(5, floor((n_eff - 1) / 3))
+```
 
 
+```{r  fig.width=10, fig.height=10}
+# t-SNE inicial (rápido) — usamos pca=TRUE e initial_dims para ganar velocidad
+perp_use <- min(107, max_perp)
 
-#Funcion para graficar varios modelos TSNE
-graficaTSNE <- function(perp){
-    tsne <- Rtsne(X_nd, dims = 2,is_distance = FALSE, perplexity = perp,theta=0.3, max_iter = 5000, verbose = TRUE)
-    resultados <- as.data.frame(tsne$Y)
-    colnames(resultados) <- c("dim_1", "dim_2")
-    resultados$NObeyesdad <- y_nd
+tsne_fit <- Rtsne::Rtsne(
+  X_nd,
+  dims         = 2,
+  perplexity   = perp_use,
+  eta          = 200,
+  theta        = 0.5,                          # más rápido (0.3 es más preciso, pero más lento)
+  max_iter     = 1000,                         # menos iteraciones para vista rápida
+  verbose      = TRUE,
+  check_duplicates = FALSE,
+  pca          = TRUE,
+  initial_dims = min(50, ncol(X_nd))
+)
 
-    graph <- ggplot(data = resultados, aes(x = dim_1, y = dim_2, color = NObeyesdad)) +
-      geom_point(size = 1.3, alpha = 0.8) +
-      scale_color_manual(
-      values = c(
-        Insufficient_Weight = "#03BCB7",
-        Normal_Weight       = "#85D713",
-        Obesity_Type_I      = "#F0B000",
-        Obesity_Type_II     = "#FF6800",
-        Obesity_Type_III    = "#FF4408",
-        Overweight_Level_I  = "#C90822",
-        Overweight_Level_II = "#800026"
-      ),
-      drop = FALSE
-    ) +
-    theme_bw()
-    return(graph)
+tsne_df <- as.data.frame(tsne_fit$Y)
+names(tsne_df) <- c("tSNE1", "tSNE2")
+tsne_df$NObeyesdad <- y_nd
+
+ggplot(tsne_df, aes(tSNE1, tSNE2, colour = NObeyesdad)) +
+  geom_point(size = 1.3, alpha = 0.85) +
+  ggsci::scale_color_npg(drop = FALSE, name = "Nivel de obesidad") +
+  labs(
+    title = sprintf("t-SNE inicial (perplexity = %d, eta = 200, theta = 0.5, iter = 1000)", perp_use),
+    x = "t-SNE 1", y = "t-SNE 2"
+  ) +
+  theme_bw()
+
+
+```
+
+```{r TSNE_grid_perplexity, fig.width=12, fig.height=8, message=FALSE, warning=FALSE}
+set.seed(42)
+
+
+
+# Límite teórico de perplexity
+n_eff    <- nrow(X_nd)
+max_perp <- max(5, floor((n_eff - 1) / 3))
+
+perps_grid <- c(10, 20, 30, 40, 50, 70, 90, 110)
+perps_grid <- perps_grid[perps_grid <= max_perp]
+if (length(perps_grid) == 0) perps_grid <- max_perp
+
+# Embeddings rápidos y estables
+emb_list <- lapply(perps_grid, function(pv) {
+  Rtsne::Rtsne(
+    X_nd,
+    dims         = 2,
+    is_distance  = FALSE,
+    perplexity   = pv,
+    eta          = 200,
+    theta        = 0.5,            # más rápido
+    max_iter     = 750,            # menos iteraciones para malla
+    verbose      = FALSE,
+    pca          = TRUE,
+    initial_dims = min(50, ncol(X_nd))
+  )$Y
+})
+
+# Data largo
+d <- data.table::rbindlist(lapply(seq_along(emb_list), function(i) {
+  data.table::data.table(
+    tSNE1      = emb_list[[i]][, 1],
+    tSNE2      = emb_list[[i]][, 2],
+    perplexity = factor(perps_grid[i], levels = perps_grid),
+    group      = y_nd
+  )
+}))
+
+# Muestra "dummy" para leyenda bonita (sin pintar en panel)
+set.seed(42)
+idx_legend <- sample.int(nrow(d), size = min(1200, nrow(d)))
+
+ggplot2::ggplot(d, ggplot2::aes(tSNE1, tSNE2, colour = group)) +
+  scattermore::geom_scattermore(pointsize = 1.8, alpha = 0.9, show.legend = FALSE) +
+  ggplot2::geom_point(data = d[idx_legend, ], alpha = 0, size = 3, show.legend = TRUE) +
+  ggsci::scale_color_npg(drop = FALSE, name = "Nivel de obesidad") +
+  ggplot2::facet_wrap(~ perplexity, ncol = 3, labeller = ggplot2::label_both) +
+  ggplot2::coord_equal() +
+  ggplot2::theme_bw(base_size = 12) +
+  ggplot2::theme(
+    legend.position   = "right",
+    legend.title      = ggplot2::element_text(size = 11),
+    legend.text       = ggplot2::element_text(size = 10),
+    legend.key.width  = grid::unit(1.4, "lines"),
+    legend.key.height = grid::unit(1.4, "lines"),
+    strip.text        = ggplot2::element_text(face = "bold"),
+    panel.grid.minor  = ggplot2::element_blank(),
+    panel.spacing     = grid::unit(0.9, "lines")
+  ) +
+  ggplot2::guides(
+    colour = ggplot2::guide_legend(
+      override.aes = list(size = 6, alpha = 1, shape = 16, stroke = 0)
+    )
+  ) +
+  ggplot2::labs(
+    title = "t-SNE (rejilla para perplexity)",
+    x = "tSNE1", y = "tSNE2"
+  )
+```
+
+
+
+```{r TSNE_grid_perp_eta, fig.width=12, fig.height=8, message=FALSE, warning=FALSE}
+set.seed(42)
+
+y_nd <- factor(
+  y_nd,
+  levels = c("Insufficient_Weight","Normal_Weight",
+             "Obesity_Type_I","Obesity_Type_II","Obesity_Type_III",
+             "Overweight_Level_I","Overweight_Level_II")
+)
+
+# Límite teórico
+n_eff    <- nrow(X_nd)
+max_perp <- max(5, floor((n_eff - 1) / 3))
+
+perps <- c(10, 30, 50, 70)
+perps <- perps[perps <= max_perp]
+if (length(perps) == 0) perps <- max_perp
+etas  <- c(50, 200)
+
+grid <- expand.grid(perplexity = perps, eta = etas)
+
+emb_list2 <- lapply(seq_len(nrow(grid)), function(i) {
+  Rtsne::Rtsne(
+    X_nd,
+    dims         = 2,
+    is_distance  = FALSE,
+    perplexity   = grid$perplexity[i],
+    eta          = grid$eta[i],
+    theta        = 0.5,
+    max_iter     = 750,
+    verbose      = FALSE,
+    pca          = TRUE,
+    initial_dims = min(50, ncol(X_nd))
+  )$Y
+})
+
+d2 <- data.table::rbindlist(lapply(seq_len(nrow(grid)), function(i) {
+  data.table::data.table(
+    tSNE1      = emb_list2[[i]][, 1],
+    tSNE2      = emb_list2[[i]][, 2],
+    perplexity = factor(grid$perplexity[i], levels = perps),
+    eta        = factor(grid$eta[i],        levels = etas),
+    group      = y_nd
+  )
+}))
+
+set.seed(42)
+idx_legend2 <- sample.int(nrow(d2), size = min(1200, nrow(d2)))
+
+ggplot2::ggplot(d2, ggplot2::aes(tSNE1, tSNE2, colour = group)) +
+  scattermore::geom_scattermore(pointsize = 1.8, alpha = 0.9, show.legend = FALSE) +
+  ggplot2::geom_point(data = d2[idx_legend2, ], alpha = 0, size = 3, show.legend = TRUE) +
+  ggsci::scale_color_npg(drop = FALSE, name = "Nivel de obesidad") +
+  ggplot2::facet_grid(eta ~ perplexity, labeller = ggplot2::label_both) +
+  ggplot2::coord_equal() +
+  ggplot2::theme_bw(base_size = 12) +
+  ggplot2::theme(
+    legend.position   = "right",
+    legend.title      = ggplot2::element_text(size = 11),
+    legend.text       = ggplot2::element_text(size = 10),
+    legend.key.width  = grid::unit(1.4, "lines"),
+    legend.key.height = grid::unit(1.4, "lines"),
+    strip.text        = ggplot2::element_text(face = "bold"),
+    panel.grid.minor  = ggplot2::element_blank(),
+    panel.spacing     = ggplot2::unit(0.9, "lines")
+  ) +
+  ggplot2::guides(
+    colour = ggplot2::guide_legend(
+      override.aes = list(size = 6, alpha = 1, shape = 16, stroke = 0)
+    )
+  ) +
+  ggplot2::labs(
+    title = "t-SNE (rejilla de combinaciones perplexity y eta)",
+    x = "tSNE1", y = "tSNE2"
+  )
+```
+
+
+```{r,  fig.width=10, fig.height=10}
+
+# --- helpers ---
+knn_overlap <- function(Xh, Yh, k = 15, n_eval = 1500) {
+  n  <- nrow(Xh)
+  if (n <= k + 1) return(NA_real_)
+  idx <- if (n > n_eval) sample.int(n, n_eval) else seq_len(n)
+
+  # K vecinos en alto-dim (X) y bajo-dim (Y)
+  nnX <- RANN::nn2(Xh, query = Xh[idx, , drop = FALSE], k = k + 1)$nn.idx[, -1, drop = FALSE]
+  nnY <- RANN::nn2(Yh, query = Yh[idx, , drop = FALSE], k = k + 1)$nn.idx[, -1, drop = FALSE]
+
+  # solape medio por fila
+  mean(vapply(seq_len(nrow(nnX)), function(i) {
+    length(intersect(nnX[i, ], nnY[i, ])) / k
+  }, numeric(1)))
 }
+
+silhouette_supervised <- function(Yh, labels, n_eval = 2000) {
+  n  <- nrow(Yh)
+  if (length(unique(labels)) < 2) return(NA_real_)
+  idx <- if (n > n_eval) sample.int(n, n_eval) else seq_len(n)
+  d   <- dist(Yh[idx, , drop = FALSE])
+  cl  <- as.integer(labels[idx])
+  sil <- cluster::silhouette(cl, d)[, 3]
+  mean(sil, na.rm = TRUE)
+}
+
+# --- cuadrícula de evaluación (compacta para tiempo razonable) ---
+grid_m <- expand.grid(
+  perplexity = pmin(c(10, 20, 30, 40, 50, 70), max_perp),
+  eta        = c(50, 200)
+)
+
+eval_list <- lapply(seq_len(nrow(grid_m)), function(i) {
+  out <- Rtsne::Rtsne(
+    X_nd,
+    dims         = 2,
+    perplexity   = grid_m$perplexity[i],
+    eta          = grid_m$eta[i],
+    theta        = 0.5,
+    max_iter     = 750,
+    verbose      = FALSE,
+    check_duplicates = FALSE,
+    pca          = TRUE,
+    initial_dims = min(50, ncol(X_nd))
+  )
+  Y   <- out$Y
+  sil <- silhouette_supervised(Y, y_nd, n_eval = 2000)
+  knn <- knn_overlap(X_nd, Y, k = 15, n_eval = 1500)
+  data.frame(perplexity = grid_m$perplexity[i],
+             eta        = grid_m$eta[i],
+             silhouette = sil,
+             knn_overlap= knn)
+})
+
+metrics <- dplyr::bind_rows(eval_list) %>%
+  mutate(
+    z_sil = as.numeric(scale(silhouette)),
+    z_knn = as.numeric(scale(knn_overlap)),
+    score = z_sil + z_knn
+  ) %>%
+  arrange(desc(score))
+
+# Tabla LaTeX (top 10)
+knitr::kable(head(metrics, 10),
+             format = "latex", booktabs = TRUE, digits = 3,
+             col.names = c("Perplexity","Eta","Silhouette","KNN overlap","z(Sil.)","z(KNN)","Score")) %>%
+  kableExtra::kable_styling(latex_options = c("hold_position"))
+
+# Entrenamos "mejor" con más calidad (más iter y theta menor)
+best_perp <- metrics$perplexity[1]
+best_eta  <- metrics$eta[1]
+
+tsne_best <- Rtsne::Rtsne(
+  X_nd,
+  dims         = 2,
+  perplexity   = best_perp,
+  eta          = best_eta,
+  theta        = 0,                     # un poco más preciso
+  max_iter     = 3000,                    # más calidad en el mejor
+  verbose      = TRUE,
+  check_duplicates = FALSE,
+  pca          = TRUE,
+  initial_dims = min(50, ncol(X_nd))
+)
+
+df_best <- as.data.frame(tsne_best$Y)
+colnames(df_best) <- c("tSNE1","tSNE2")
+df_best$NObeyesdad <- factor(
+  y_nd,
+  levels = c("Insufficient_Weight","Normal_Weight",
+             "Overweight_Level_I","Overweight_Level_II",
+             "Obesity_Type_I","Obesity_Type_II","Obesity_Type_III")
+)
+
+ggplot(df_best, aes(tSNE1, tSNE2, colour = NObeyesdad)) +
+  scattermore::geom_scattermore(pointsize = 2) +
+  ggsci::scale_color_npg(name = "Nivel de obesidad", drop = FALSE) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position  = "bottom",
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = sprintf("t-SNE seleccionado (perplexity = %d, eta = %d)", best_perp, best_eta),
+    x = "t-SNE 1", y = "t-SNE 2"
+  )
+```
+
+```{r}
+perps <- c(5, 10, 15, 20, 30, 40, 50, 60, 80, 100, 120, 140, 150)
+perps <- perps[perps <= max_perp]
+
+out_dir <- "FiguresTSNE"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+.plot_tsne <- function(perp, eta = 200, seed = 42) {
+  set.seed(seed)
+  ts <- Rtsne(
+    X_nd,
+    dims         = 2,
+    perplexity   = perp,
+    eta          = eta,
+    theta        = 0.5,
+    max_iter     = 1000,
+    verbose      = FALSE,
+    pca          = TRUE,
+    initial_dims = min(50, ncol(X_nd))
+  )
+  dfp <- as.data.frame(ts$Y)
+  colnames(dfp) <- c("tSNE1","tSNE2")
+  dfp$NObeyesdad <- factor(
+    y_nd,
+    levels = c("Insufficient_Weight","Normal_Weight",
+               "Overweight_Level_I","Overweight_Level_II",
+               "Obesity_Type_I","Obesity_Type_II","Obesity_Type_III")
+  )
+  ggplot(dfp, aes(tSNE1, tSNE2, colour = NObeyesdad)) +
+    scattermore::geom_scattermore(pointsize = 2) +
+    ggsci::scale_color_npg(name = "Nivel de obesidad", drop = FALSE) +
+    theme_minimal(base_size = 10) +
+    theme(
+      legend.position  = "bottom",
+      panel.grid.minor = element_blank()
+    ) +
+    labs(title = sprintf("t-SNE (perplexity = %d, eta = %d)", perp, eta),
+         x = "t-SNE 1", y = "t-SNE 2")
+}
+
+for (pp in perps) {
+  p <- .plot_tsne(pp, eta = 200)
+  ggsave(file.path(out_dir, sprintf("TSNE_perp_%d.png", pp)),
+         plot = p, width = 7, height = 6, dpi = 300)
+}
+```
+
+# UMAP
+
+Escalando los datos de las variables numericas para emplear UMAP e indicando el valor del centroide
+```{r}
+# UMAP sobre numéricas estandarizadas
+set.seed(123)
+
+X_num <- data %>%
+  dplyr::select(where(is.numeric)) %>%
+  scale() %>%
+  as.matrix()
+
+data_umap <- uwot::umap(
+  X_num
+)
+
+str(data_umap)
+
+
+```
+
+
+Se grafican los dos primeros ejes El segundo eje separa al conjunto de sujetos con Obesidad tipo III de los de la Obesidad tipo I, que visulamente, estan ensimados sobre los de Obesidad tipo II. Las categorías restantes se encuentran mezcladas no permitiendo ver un patron definido.
+```{r}
+# Construir data frame para graficar a partir del objeto creado: data_umap
+
+
+umap_df <- tibble::tibble(
+  UMAP1 = data_umap[, 1],
+  UMAP2 = data_umap[, 2],
+  NObeyesdad = data$NObeyesdad
+)
+
+head(umap_df)
+
+
+ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = NObeyesdad)) +
+  geom_point(size = 1.8, alpha = 0.85) +
+  ggsci::scale_color_npg(name = "Nivel de obesidad") +  # opcional
+  labs(title = "Obesidad: UMAP", x = "UMAP1", y = "UMAP2", color = "Nivel de obesidad") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+```
+
+Empleamos 
+```{r}
+
+set.seed(123)
+
+umap_rec <- recipe(NObeyesdad ~ ., data = data) %>%
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>%
+  step_zv(all_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  embed::step_umap(
+    all_predictors()
+  )
+
+umap_res <- prep(umap_rec)
+
+
+umap_juice <- juice(umap_res)
+
+ggplot(umap_juice, aes(UMAP1, UMAP2, color = NObeyesdad)) +
+  geom_point(size = 1.6, alpha = 0.9) +
+  labs(title = "UMAP (recipes + embed)", x = "UMAP1", y = "UMAP2", color = "Nivel de obesidad") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+
+```
+
+
+
+Exploración con Hiperparámetros
+
+En clase se hizo enfasis en que UMAP es mejor realizarlo con definición de hiperparámteros, en los cuales se hace referencia que los más importantes son las vecinos más cercano y la distancia mínima. No se establació una regla para definir dichos parámetros, sin embargo después de realizar varias pruebas se llegaron a los siguientes:
+   - Vecinos más cercanos sugerimos grupos de 10, 20, 40 y 80 
+   - Distancias 0.5, 0.75, 1. 
+
+Las mejores gráficas en cuanto a vecinos más cercanos es para 80 y la de mínima distancia es la de 0.5. 
+
+Es importante decir que el orden de la escala térmica en las gráficas indica se evidencia el orden de los niveles de obesidad, es decir, el peso insuficiente, peso normal, sobrepeso nivel I, sobrepeso nivel II, obesidad grado I, obesidad grado II  y la obesidad grado III, lo que la técinica de reducción de dimensiones con UMAP es adecuada.
+```{r}
+# UMAP – Rejilla de hiperparámetros (n_neighbors × min_dist) con formato profesional
+set.seed(123)
+
+if (!exists("X_num")) {
+  X_num <- data %>%
+    dplyr::select(where(is.numeric)) %>%
+    scale() %>%
+    as.matrix()
+}
+
+grid <- expand.grid(
+  n_neighbors = c(10, 20, 40, 80, 120),
+  min_dist    = c(0.25, 0.50, 0.75, 1.00)
+)
+
+emb_list <- lapply(seq_len(nrow(grid)), function(i) {
+  uwot::umap(
+    X_num,
+    n_neighbors  = grid$n_neighbors[i],
+    min_dist     = grid$min_dist[i]
+  )
+})
+
+d <- data.table::rbindlist(lapply(seq_along(emb_list), function(i) {
+  data.table::data.table(
+    UMAP1 = emb_list[[i]][, 1],
+    UMAP2 = emb_list[[i]][, 2],
+    n_neighbors = factor(grid$n_neighbors[i], levels = sort(unique(grid$n_neighbors))),
+    min_dist    = factor(grid$min_dist[i],    levels = sort(unique(grid$min_dist))),
+    NObeyesdad  = data$NObeyesdad
+  )
+}))
+
+p <- ggplot(d, aes(UMAP1, UMAP2, color = NObeyesdad)) +
+  geom_point(size = 0.6, alpha = 0.6) +
+  facet_grid(min_dist ~ n_neighbors, labeller = label_both) +
+  ggsci::scale_color_npg(name = "Nivel de obesidad", drop = FALSE) +
+  coord_equal() +
+  labs(
+    title    = "UMAP (rejilla de combinaciones para n_neighbors y min_dist)",
+    x = "UMAP1", y = "UMAP2"
+  ) +
+  theme_bw(base_size = 9) +
+  theme(
+    panel.grid.minor   = element_blank(),
+    strip.background   = element_rect(fill = "grey92", colour = NA),
+    legend.position    = "right",
+    legend.key.height  = grid::unit(0.7, "cm"),
+    legend.key.width   = grid::unit(0.7, "cm"),
+    legend.title       = element_text(size = 10),
+    legend.text        = element_text(size = 9)
+  ) +
+  guides(color = guide_legend(override.aes = list(size = 4, alpha = 1)))
+
+p
+
+
+
+```
+
+Con otros valores de mayor número de vecinos más cercanos y menor distancia que el anterior. Para este ajuste, las gráficas con distancia de 0.25 resultaron mejor definidas con respecto a los tres valores de vecinos más cercano, lo que nos indica que, para esta modelo, la distancia es más importante que la cantidad de vecinos más cercanos.
+```{r}
+# --- Grid 2: n_neighbors = 50,100,150 × min_dist = 0.25,0.75,1.25
+set.seed(123)
+grid2 <- expand.grid(n_neighbors = c(50, 100, 150),
+                     min_dist    = c(0.25, 0.75,1.0, 1.25))
+
+umaps2 <- lapply(seq_len(nrow(grid2)), function(i) {
+  uwot::umap(X_num,
+             n_neighbors = grid2$n_neighbors[i],
+             min_dist    = grid2$min_dist[i])
+})
+
+d_grid2 <- data.table::rbindlist(lapply(seq_len(nrow(grid2)), function(i) {
+  data.table::data.table(
+    UMAP1 = umaps2[[i]][,1],
+    UMAP2 = umaps2[[i]][,2],
+    n_neighbors = factor(grid2$n_neighbors[i]),
+    min_dist    = factor(grid2$min_dist[i]),
+    NObeyesdad  = data$NObeyesdad
+  )
+}))
+
+p_grid2 <- ggplot(d_grid2, aes(UMAP1, UMAP2, color = NObeyesdad)) +
+  geom_point(size = 0.6, alpha = 0.6) +
+  facet_grid(min_dist ~ n_neighbors, labeller = label_both) +
+  ggsci::scale_color_npg(name = "Nivel de obesidad", drop = FALSE) +
+  coord_equal() +
+  labs(title = "UMAP (rejilla para n_neighbors y min_dist)",
+       x = "UMAP1", y = "UMAP2") +
+  theme_bw(base_size = 9) +
+  theme(panel.grid.minor = element_blank(),
+        strip.background = element_rect(fill = "grey92", colour = NA),
+        legend.position = "right",
+        legend.key.height = grid::unit(0.7, "cm"),
+        legend.key.width  = grid::unit(0.7, "cm"),
+        legend.title = element_text(size = 10),
+        legend.text  = element_text(size = 9)) +
+  guides(color = guide_legend(override.aes = list(size = 4, alpha = 1)))
+p_grid2
+
+
+```
+
+
+
+Se hizo la animación con los parámetros que se consideraron mejores con respect a las distancias de 0.25 y 0.5 y los vecinos más cercanos de 10, 20, 40, 50.  
+```{r}
+# Animación UMAP – verificación de hiperparámetros (n_neighbors ∈ {10,20,40,50}, min_dist ∈ {0.25, 0.50})
+
+
+set.seed(123)
+
+
+grid_anim <- expand.grid(
+  n_neighbors = c(10, 20, 40, 50),
+  min_dist    = c(0.25, 0.50)
+)
+
+emb_anim <- lapply(seq_len(nrow(grid_anim)), function(i) {
+  uwot::umap(
+    X_num,
+    n_neighbors  = grid_anim$n_neighbors[i],
+    min_dist     = grid_anim$min_dist[i]
+  )
+})
+
+anim_df <- data.table::rbindlist(lapply(seq_along(emb_anim), function(i) {
+  data.table::data.table(
+    UMAP1 = emb_anim[[i]][, 1],
+    UMAP2 = emb_anim[[i]][, 2],
+    parametros = sprintf("n_neighbors: %s — min_dist: %s",
+                         grid_anim$n_neighbors[i], grid_anim$min_dist[i]),
+    NObeyesdad = data$NObeyesdad
+  )
+}))
+anim_df$parametros <- factor(anim_df$parametros, levels = unique(anim_df$parametros))
+
+anim_plot1 <- ggplot(anim_df, aes(UMAP1, UMAP2, colour = NObeyesdad)) +
+  geom_point(size = 0.8, alpha = 0.7) +
+  ggsci::scale_color_npg(name = "Nivel de obesidad", drop = FALSE) +
+  coord_equal() +
+  labs(
+    title    = "UMAP – verificación de hiperparámetros",
+    subtitle = "{closest_state}",
+    x = NULL, y = NULL
+  ) +
+  theme_bw(base_size = 10) +
+  theme(
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_blank(),
+    axis.ticks        = element_blank(),
+    legend.position   = "right",
+    legend.key.height = grid::unit(0.7, "cm"),
+    legend.key.width  = grid::unit(0.7, "cm")
+  ) +
+  guides(colour = guide_legend(override.aes = list(size = 4, alpha = 1))) +
+  transition_states(parametros, transition_length = 2, state_length = 3)
+
+# Render 
+animate(anim_plot1, nframes = 300, fps = 25, width = 900, height = 600,renderer = av_renderer("umap_anim.mp4"))
 
 
 ```
 
 
 ```{r}
-# secuencia  <- seq(from = 5, to = 175, by = 10)
-# secuencia2 <- seq(from = 40, to = 46, by = 2)
-# secper     <- c(56, 57, 58, 59, 61, 62, 63, 64, 66, 67, 69)
-# faltan     <- c(
-#   7, 9, 11, 13, 17, 19, 21, 23, 27, 29, 31, 33,
-#   37, 41, 43, 45, 47, 49, 51, 53,
-#   71, 73, 77, 79, 81, 83, 87, 89, 91, 93, 97, 99, 101, 103,
-#   105, 107, 109, 111, 113, 117, 121, 123, 127, 129, 131, 133,
-#   137, 139, 141, 143, 147, 149, 151, 153, 157, 159, 161, 163,
-#   167, 169, 171, 173
-# )
-#
-# extra <- c(106,108,116,114)
-#
-# unidas <- c(secuencia, secuencia2, secper)
-# unidas
-# rutabase <- getwd()
-#
-# ruta <- paste0(rutabase, "/FiguresTSNE/")
-#
-# for(i in extra){
-#   nombre <- paste0(ruta,"/TSNE_perp_", i , ".png")
-#   png(nombre)
-#   p <- graficaTSNE(i) # que esta función devuelva un ggplot
-#   print(p)
-#   dev.off()
-# }
+
+d1_anim <- d1
+if (!all(c("x","y") %in% names(d1_anim)) && all(c("UMAP1","UMAP2") %in% names(d1_anim))) {
+  d1_anim <- d1_anim %>% dplyr::rename(x = UMAP1, y = UMAP2)
+}
+
+
+anim_plot2 <- d1_anim %>% 
+  dplyr::filter(min_dist %in% c(0.5, 0.75, 1.1)) %>% 
+  dplyr::mutate(parametros = factor(paste('n_neighbors:', n_neighbors, 'min_dist:', min_dist))) %>% 
+  ggplot2::ggplot(ggplot2::aes(x = x, y = y, col = group)) +
+  scattermore::geom_scattermore(pointsize = 2) +
+  ggplot2::theme_bw() +
+  ggplot2::labs(
+    title    = 'Selección de hiperparámetros (UMAP)'
+  ) +
+  ggplot2::theme(
+    axis.text  = ggplot2::element_blank(),
+    axis.ticks = ggplot2::element_blank(),
+    axis.title = ggplot2::element_blank(),
+    legend.position = "none"
+  ) +
+  gganimate::transition_states(parametros, transition_length = 2, state_length = 3)
 
 
 
-
-```
-
-
-
-```{r  fig.width=10, fig.height=10}
-#Usanso PCA y TSNe
-pca <- prcomp(x = X_nd)
-resultados <- as.data.frame(pca$x[, 1:2])
-resultados$NObeyesdad <- y_nd
-# Asegura que la clase sea factor y con niveles en el orden que quieres
-resultados$NObeyesdad <- factor(
-  resultados$NObeyesdad,
-  levels = c("Insufficient_Weight","Normal_Weight","Obesity_Type_I",
-             "Obesity_Type_II","Obesity_Type_III",
-             "Overweight_Level_I","Overweight_Level_II")
+mp4_file <- "umap_anim_minDist_050_075_110.mp4"
+gganimate::animate(
+  anim_plot2,
+  renderer = av_renderer(mp4_file),
+  width = 900, height = 600, res = 120,
+  fps = 30, duration = 12  
 )
 
-ggplot(resultados, aes(PC1, PC2, color = NObeyesdad)) +
-  geom_point(size = 1.3, alpha = 0.8) +
-  theme_bw() +
-  ggsci::scale_color_npg()
-
 
 
 ```
 
+```{r}
 
 
+set.seed(123)
 
 
+X_num <- data %>%
+  dplyr::select(where(is.numeric)) %>%
+  scale() %>%
+  as.matrix()
+
+y <- droplevels(data$NObeyesdad)
+
+
+grid_fig <- dplyr::bind_rows(
+  expand.grid(n_neighbors = c(10, 20, 40, 80, 120), min_dist = c(0.25, 0.50, 0.75, 1.00)),
+  expand.grid(n_neighbors = c(50, 100, 150),        min_dist = c(0.25, 0.75, 1.0, 1.25))
+) |> dplyr::distinct()
+
+# Embeddings UMAP 
+emb_list <- lapply(seq_len(nrow(grid_fig)), function(i) {
+  uwot::umap(
+    X          = X_num,
+    n_neighbors  = grid_fig$n_neighbors[i],
+    min_dist     = grid_fig$min_dist[i]
+  )
+})
+
+# Métricas: silhouette por clase + solapamiento de vecinos (KNN overlap)
+eval_one <- function(Y, y, k = 15) {
+  idx_X <- FNN::get.knn(X_num, k = k)$nn.index
+  idx_Y <- FNN::get.knn(Y,     k = k)$nn.index
+  knn_overlap <- mean(vapply(seq_len(nrow(X_num)), function(r) {
+    mean(idx_Y[r, ] %in% idx_X[r, ])
+  }, numeric(1)))
+
+  sil <- tryCatch({
+    s <- cluster::silhouette(as.integer(y), stats::dist(Y))
+    mean(s[, 3], na.rm = TRUE)
+  }, error = function(e) NA_real_)
+
+  c(silhouette = sil, knn_overlap = knn_overlap)
+}
+
+metrics_fig <- do.call(rbind, lapply(seq_len(nrow(grid_fig)), function(i) {
+  m <- eval_one(emb_list[[i]], y, k = 15)
+  data.frame(
+    n_neighbors = grid_fig$n_neighbors[i],
+    min_dist    = grid_fig$min_dist[i],
+    silhouette  = unname(m["silhouette"]),
+    knn_overlap = unname(m["knn_overlap"])
+  )
+})) |>
+  mutate(
+    z_sil = as.numeric(scale(silhouette)),
+    z_knn = as.numeric(scale(knn_overlap)),
+    score = z_sil + z_knn
+  ) |>
+  arrange(desc(score))
+
+
+print(head(metrics_fig, 10))
+
+
+knitr::kable(
+  head(metrics_fig, 12) |>
+    mutate(across(c(silhouette, knn_overlap, score), ~ round(.x, 3))),
+  format   = "latex", booktabs = TRUE,
+  col.names = c("$n_{neighbors}$","$min\\_dist$","Silhouette","KNN overlap","z(Sil.)","z(KNN)","Score")
+)
+
+# Toma la mejor combinación y se grafica
+best_cfg <- metrics_fig |> slice(1)
+best_Y <- uwot::umap(
+  X_num,
+  n_neighbors  = best_cfg$n_neighbors,
+  min_dist     = best_cfg$min_dist
+)
+
+df_best <- data.frame(
+  UMAP1 = best_Y[, 1],
+  UMAP2 = best_Y[, 2],
+  NObeyesdad = y
+)
+
+ggplot(df_best, aes(UMAP1, UMAP2, colour = NObeyesdad)) +
+  geom_point(alpha = 0.85, size = 1.6) +
+  ggsci::scale_color_npg(
+    name = "Nivel de obesidad",
+    guide = guide_legend(override.aes = list(size = 5))
+  ) +
+  theme_minimal() +
+  labs(
+    title = sprintf("UMAP seleccionado: los mejores parámetros son n_neighbors=%s, min_dist=%s",
+                    best_cfg$n_neighbors, best_cfg$min_dist),
+    x = "UMAP1", y = "UMAP2"
+  )
+
+```
+
+
+```{r}
+
+plot_umap_combo <- function(nn = 20, md = 0.25, metric = "euclidean", seed = 123) {
+  set.seed(seed)
+  emb <- uwot::umap(
+    X          = X_num,
+    n_neighbors  = nn,
+    min_dist     = md,
+    metric       = metric,
+    n_components = 2,
+    n_threads    = 1
+  )
+  df_plot <- data.frame(
+    UMAP1 = emb[, 1],
+    UMAP2 = emb[, 2],
+    NObeyesdad = data$NObeyesdad
+  )
+
+  ggplot2::ggplot(df_plot, ggplot2::aes(UMAP1, UMAP2, colour = NObeyesdad)) +
+    ggplot2::geom_point(size = 1.8, alpha = 0.85) +
+    ggsci::scale_color_npg(name = "Nivel de obesidad", drop = FALSE) +
+    ggplot2::guides(color = ggplot2::guide_legend(override.aes = list(size = 4))) +
+    ggplot2::theme_minimal(base_size = 12) +
+    ggplot2::theme(
+      legend.position = "bottom",
+      legend.box      = "horizontal"
+    ) +
+    ggplot2::labs(
+      title = sprintf("UMAP para n_neighbors = %s, min_dist = %.2f", nn, md),
+      x = "UMAP1", y = "UMAP2"
+    )
+}
+
+p_best <- plot_umap_combo(nn = 150, md = 0.25)
+p_best
+
+```
 
 
 
