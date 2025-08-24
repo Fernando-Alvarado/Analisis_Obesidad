@@ -135,33 +135,37 @@ vars_cat <- data %>%  dplyr::select(where(is.factor))
 ```
 
 
-```{r Graficas_Bonitas1_pro, fig.width=15, fig.height=17}
-# Repite las gráficas con paleta ggsci (sin tocar las originales)
-entradas <- c("Gender" ,"CALC", "FAVC", "SCC"  ,"SMOKE" ,"family_history_with_overweight" ,"CAEC" ,"MTRANS", "NObeyesdad", "FCVC", "NCP", "CH2O", "FAF", "TUE" )
-entradas_pro <- setdiff(entradas, "NObeyesdad")
-plots_pro <- list()
+```{r,   fig.width=15, fig.height=17}
 
-for (v in entradas_pro) {
-  if (!v %in% names(data)) next
- plots_pro[[length(plots_pro)+1]] <-
-  ggplot(data, aes(x = factor(data[[v]]), fill = NObeyesdad)) +
-  geom_bar(position = "fill", width = 0.9, color = "white", linewidth = 0.2) +
-  geom_text(
-    stat = "count",
-    aes(label = scales::percent(after_stat(count/sum(count)), accuracy = 0.01)),
-    position = position_fill(vjust = 0.5), size = 2.2, lineheight = 0.9
-  ) +
-  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
-  ggsci::scale_fill_npg(name = "Nivel de obesidad", drop = FALSE) +  # define el nombre aquí
-  labs(title = paste0(v, " vs NObeyesdad"), x = v, y = "Proporción") +
-  theme_minimal() +
-  theme(
-    panel.grid.minor = element_blank(),
-    axis.text.x = element_text(angle = 35, hjust = 1)
-  )
+graficasCat <- list()
+
+for (i in entradas) {
+  print(i)
+  p <- ggplot(data, aes_string(x = i, fill = "NObeyesdad")) +
+    geom_bar(position = "fill") +
+    geom_text(
+      stat = "count",
+      aes(
+        label = scales::percent(after_stat(count / sum(count)), accuracy = 0.1),
+        group = NObeyesdad
+      ),
+      position = position_fill(vjust = 0.5),
+      size = 3
+    ) +
+    ggsci::scale_fill_npg(name = "Nivel de obesidad", drop = FALSE) +
+    labs(title = paste(i, "vs NObeyesdad")) +
+    theme_minimal() +
+    theme(
+      axis.text.x   = element_text(angle = 45, hjust = 1),
+      legend.text   = element_text(size = 7),
+      legend.title  = element_text(size = 10),
+      legend.key.size = unit(0.4, "cm")
+    )
+
+  graficasCat[[length(graficasCat) + 1]] <- p
 }
 
-wrap_plots(plots_pro, ncol = 3) +
+wrap_plots(graficasCat, ncol = 3) +
   plot_layout(guides = "collect") &
   theme(
     legend.position = "right",       # ahora a la derecha
@@ -172,8 +176,11 @@ wrap_plots(plots_pro, ncol = 3) +
   )
 
 
-
 ```
+
+
+
+
 
 
 En la gráfica anterior se observa cómo se distribuyen los diferentes **tipos de obesidad** dentro de nuestras variables categóricas.  
