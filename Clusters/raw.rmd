@@ -1,0 +1,359 @@
+# =====================
+# 0) Paquetes y datos
+# =====================
+
+
+```{r}
+
+
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(tidymodels)
+  library(tidyclust)
+  library(GGally)
+  library(ggsci)
+  library(dbscan)
+  library(mclust)
+  library(cluster)
+  library(clusterSim)
+  library(clValid)
+  library(factoextra)     # visualización (opc.)
+  library(ClusterR)       # métricas/óptimos (opc.)
+  library(NbClust) 
+  library(dplyr)       # óptimo K (opc.)
+})
+
+set.seed(123)
+
+```
+
+
+```{r}
+raw <- read.csv("obesity_clean.csv", check.names = FALSE)
+
+X <- raw %>%
+  dplyr::select(tidyselect::where(is.numeric)) %>%  # <- forzamos dplyr
+  dplyr::mutate(dplyr::across(dplyr::everything(), as.numeric))
+
+stopifnot(ncol(X) > 1)
+X_s <- scale(X) %>% as.matrix()
+
+
+```
+
+# Helper: PCA para visualización (90% var)
+
+```{r}
+pca_rec <- recipe(~ ., data = as.data.frame(X_s)) %>%
+  step_pca(all_numeric_predictors(), threshold = 0.90)
+pca_prep <- prep(pca_rec)
+X_pca   <- bake(pca_prep, new_data = NULL)
+````
+
+
+
+```{r}
+label <- if (!is.na(label_col)) factor(raw[[label_col]]) else NULL
+````
+
+```{r}
+pal <- pal_jco("default")(10)
+
+ggplot2::theme_set(theme_minimal(base_size = 12))
+```
+
+# ======================================
+# 1) Model-Based Clustering (GMM, mclust)
+# ======================================
+
+# --- Exploración del número de clústeres con BIC ---
+# Nota: mclustBIC sobre datos escalados; también versión en PCA
+
+```{r}
+BIC_full <- mclustBIC(X_s)
+BIC_pca  <- mclustBIC(as.matrix(X_pca))
+
+# Ajuste final (elige el mejor por BIC en PCA para estabilidad)
+fit_gmm <- Mclust(as.matrix(X_pca), x = NULL, G = NULL, modelNames = NULL, prior = NULL)
+
+cat("\n[GMM] Mejor modelo (PCA):\n")
+print(summary(fit_gmm), digits = 3)
+
+# Discriminant coordinates y fronteras
+try({
+  gmm_dr <- MclustDR(fit_gmm)
+  print(summary(gmm_dr))
+  # Plots interactivos (descomentar si los quieres ver en R)
+  # plot(gmm_dr, what = "pairs")
+  # plot(gmm_dr, what = "boundaries", ngrid = 200)
+}, silent = TRUE)
+
+# Contingencia con etiqueta (si existe)
+if (!is.null(label)) {
+  tbl <- table(Cluster = fit_gmm$classification, Label = label)
+  cat("\n[GMM] Tabla de contingencia (cluster vs etiqueta):\n")
+  print(tbl)
+}
+
+# Visualización en 2D (PC1-PC2)
+if (ncol(X_pca) >= 2) {
+  df_plot <- X_pca %>% as_tibble() %>%
+    mutate(cluster = as.factor(fit_gmm$classification),
+           label = if (!is.null(label)) label else NA)
+  gg_gmm <- ggplot(df_plot, aes(PC1, PC2, color = cluster)) +
+    geom_point(alpha = .8) +
+    scale_color_manual(values = pal) +
+    labs(title = "GMM (mclust) en espacio PCA", color = "Cluster")
+  print(gg_gmm)
+}
+```
+
+# ==============================
+# 2) DBSCAN (densidad, dbscan)
+# ==============================
+
+# Heurística para minPts: d+1 y 2d
+D <- ncol(X_s)
+minPts_candidates <- unique(c(D + 1, 2 * D))
+minPts_sel <- minPts_candidates[1]
+
+# Curva kNN-dist para estimar eps
+# kNNdistplot(X_s, k = minPts_sel); abline(h =  quantile(kNNdist(X_s, k = minPts_sel), c(.90,.95)), lty=2)
+
+qn <- quantile(kNNdist(X_s, k = minPts_sel), c(.70,.80,.90,.95,.99), na.rm = TRUE)
+print(qn)
+
+# Prueba con dos cortes (alto/bajo)
+eps_hi <- unname(qn[["95%"]])
+eps_lo <- unname(qn[["90%"]])
+
+fit_db_hi <- dbscan(X_s, eps = eps_hi, minPts = minPts_sel)
+fit_db_lo <- dbscan(X_s, eps = eps_lo, minPts = minPts_sel)
+
+cat("\n[DBSCAN] eps_hi resumen:\n"); print(fit_db_hi)
+cat("\n[DBSCAN] eps_lo resumen:\n"); print(fit_db_lo)
+
+# Visualización en PCA 2D
+plot_dbscan <- function(fit, title) {
+  if (ncol(X_pca) < 2) return(invisible(NULL))
+  dfp <- X_pca %>% as_tibble() %>% mutate(cluster = factor(fit$cluster))
+  ggplot(dfp, aes(PC1, PC2, color = cluster)) +
+    geom_point(alpha = .8) +
+    scale_color_manual(values = pal) +
+    labs(title = title, color = "Cluster")
+}
+
+print(plot_dbscan(fit_db_hi, sprintf("DBSCAN (eps=%.3f, minPts=%d)", eps_hi, minPts_sel)))
+print(plot_dbscan(fit_db_lo, sprintf("DBSCAN (eps=%.3f, minPts=%d)", eps_lo, minPts_sel)))
+
+# ================================
+# 3) OPTICS (+ tuning de parámetro ξ)
+# ================================
+
+fit_opt <- optics(X_s, minPts = minPts_sel)
+# plot(fit_opt) # gráfico de alcanzabilidad
+
+# Extrae clustering con distintos xi y evalúa índices (DB, Dunn, G1)
+cluster_metrics <- function(data, clusters, dist_matrix) {
+  list(
+    db   = clusterSim::index.DB(as.matrix(data), clusters)$DB,
+    G1   = clusterSim::index.G1(as.matrix(data), clusters),
+    dunn = clValid::dunn(dist_matrix, clusters),
+    k    = length(unique(clusters))
+  )
+}
+
+xis <- seq(0.02, 0.15, by = 0.01)
+perf <- map_dfr(xis, function(xi) {
+  cl <- extractXi(fit_opt, xi = xi)
+  cl_vec <- cl$cluster
+  if (is.null(cl_vec)) return(tibble(xi = xi, db = NA_real_, G1 = NA_real_, dunn = NA_real_, k = NA_integer_))
+  dm <- dist(X_s)
+  met <- cluster_metrics(X_s, cl_vec, dm)
+  tibble(xi = xi, db = met$db, G1 = met$G1, dunn = met$dunn, k = met$k)
+})
+
+print(perf, n = Inf)
+
+ggplot(perf %>% pivot_longer(db:dunn), aes(x = k, y = value)) +
+  geom_point() + geom_line() +
+  facet_wrap(~ name, scales = "free_y") +
+  labs(title = "OPTICS: trade-off métricas vs #clusters (ξ barrido)", x = "# clusters", y = NULL)
+
+# Escoge el xi con mejor (menor) DB, por ejemplo
+best_row <- perf %>% filter(!is.na(db)) %>% slice_min(db, n = 1)
+if (nrow(best_row) == 1) {
+  xi_best <- best_row$xi[1]
+  cl_best <- extractXi(fit_opt, xi = xi_best)$cluster
+  if (!is.null(cl_best) && ncol(X_pca) >= 2) {
+    dfp <- X_pca %>% as_tibble() %>% mutate(cluster = factor(cl_best))
+    print(ggplot(dfp, aes(PC1, PC2, color = cluster)) +
+            geom_point(alpha = .8) +
+            scale_color_manual(values = pal) +
+            labs(title = sprintf("OPTICS + extractXi (xi=%.3f)", xi_best)))
+  }
+}
+
+# =====================
+# 4) HDBSCAN
+# =====================
+
+fit_hdb <- hdbscan(X_s, minPts = minPts_sel)
+print(str(fit_hdb))
+
+if (ncol(X_pca) >= 2) {
+  dfp <- X_pca %>% as_tibble() %>% mutate(cluster = factor(fit_hdb$cluster))
+  print(ggplot(dfp, aes(PC1, PC2, color = cluster)) +
+          geom_point(alpha = .8) +
+          scale_color_manual(values = pal) +
+          labs(title = sprintf("HDBSCAN (minPts=%d)", minPts_sel)))
+}
+
+# hullplot(X_s, fit_hdb) # opcional
+
+# ==============================
+# 5) Clustering jerárquico (hclust)
+# ==============================
+
+```{r}
+## Distancias y jerárquico (robusto)
+D_euc <- stats::dist(X_s, method = "euclidean")
+
+hc_methods <- list(
+  average  = stats::hclust(D_euc, method = "average"),
+  single   = stats::hclust(D_euc, method = "single"),
+  complete = stats::hclust(D_euc, method = "complete"),
+  wardD    = stats::hclust(D_euc, method = "ward.D"),
+  wardD2   = stats::hclust(D_euc, method = "ward.D2")
+)
+
+# Correlación cophenética (convierte a num para evitar fallos de clase/dist)
+cophen <- purrr::map_dbl(hc_methods, ~ {
+  cd <- stats::cophenetic(.x)  # 'dist'
+  stats::cor(as.numeric(D_euc), as.numeric(cd), use = "pairwise.complete.obs")
+})
+print(cophen)
+
+# Elige liga y cortes
+hc <- hc_methods$wardD2
+K_grid <- 2:6
+cut_list <- purrr::map(K_grid, ~ stats::cutree(hc, k = .x))
+
+# Dendrograma: usa factoextra si está disponible; si no, base R
+if (requireNamespace("factoextra", quietly = TRUE)) {
+  dend <- as.dendrogram(hc)  # pasar dend evita errores internos
+  factoextra::fviz_dend(
+    dend, k = 3, rect = TRUE, rect_fill = TRUE,
+    show_labels = FALSE, k_colors = "jco"
+  )
+} else {
+  plot(hc, labels = FALSE, hang = -1, main = "Jerárquico (ward.D2)")
+  rect.hclust(hc, k = 3, border = 2:4)
+}
+
+# Asegura PCA 2D para visualización (si no existe, créalo con prcomp)
+if (!exists("X_pca") || !is.data.frame(X_pca) || nrow(X_pca) != nrow(X_s)) {
+  pc <- stats::prcomp(X_s, center = FALSE, scale. = FALSE)
+  X_pca <- as.data.frame(pc$x)    # columnas PC1, PC2, ...
+}
+
+# Visualización en PCA para K=3
+if (ncol(X_pca) >= 2) {
+  k3  <- stats::cutree(hc, k = 3)
+  stopifnot(nrow(X_pca) == length(k3))
+
+  dfp <- tibble::as_tibble(X_pca) %>%
+    dplyr::mutate(cluster = factor(k3))
+
+  # Paleta de respaldo si 'pal' no existe
+  if (!exists("pal")) pal <- scales::hue_pal()(10)
+
+  print(
+    ggplot2::ggplot(dfp, ggplot2::aes(PC1, PC2, color = cluster)) +
+      ggplot2::geom_point(alpha = .8) +
+      ggplot2::scale_color_manual(values = pal) +
+      ggplot2::labs(title = "Jerárquico (ward.D2, K = 3) en PCA")
+  )
+}
+
+
+```
+
+# ======================
+# 6) K-means y elección de K
+# ======================
+
+# Exploración con tidymodels/tidyclust usando WSS/TSS (sse_ratio)
+rec_km <- recipe(~ ., data = as.data.frame(X_s))
+km_spec <- k_means(num_clusters = tune()) %>% set_engine("stats")
+km_wf   <- workflow(rec_km, km_spec)
+
+boots <- bootstraps(as.data.frame(X_s), times = 10)
+res_k  <- tune_cluster(
+  km_wf,
+  resamples = boots,
+  grid = tibble(num_clusters = 1:10),
+  metrics = cluster_metric_set(sse_within_total, sse_total, sse_ratio)
+)
+
+metrics_k <- collect_metrics(res_k)
+print(metrics_k, n = Inf)
+
+ggplot(metrics_k %>% filter(.metric == "sse_ratio"), aes(num_clusters, mean)) +
+  geom_point() + geom_line() +
+  labs(title = "K-means: WSS/TSS por K (bootstraps)", x = "# clusters", y = "mean WSS/TSS")
+
+# Elige mejor K (mínimo sse_ratio)
+bestK <- res_k %>% select_best(metric = "sse_ratio")
+print(bestK)
+
+km_final_spec <- k_means(num_clusters = bestK$num_clusters) %>% set_engine("stats")
+km_final_fit  <- fit(workflow(rec_km, km_final_spec), data = as.data.frame(X_s))
+
+assignments <- augment(km_final_fit, as.data.frame(X_s))$.pred_cluster
+
+if (ncol(X_pca) >= 2) {
+  dfp <- X_pca %>% as_tibble() %>% mutate(cluster = factor(assignments))
+  print(ggplot(dfp, aes(PC1, PC2, color = cluster)) +
+          geom_point(alpha = .8) +
+          scale_color_manual(values = pal) +
+          labs(title = sprintf("K-means (K=%d) en PCA", bestK$num_clusters)))
+}
+
+# ================================
+# 7) Pipeline PCA + Clustering (GMM/K-means)
+# ================================
+
+rec_pca90 <- recipe(~ ., data = as.data.frame(X_s)) %>% step_pca(all_numeric_predictors(), threshold = 0.90)
+wf_pca_km <- workflow(rec_pca90, k_means(num_clusters = bestK$num_clusters) %>% set_engine("stats"))
+fit_pca_km <- fit(wf_pca_km, data = as.data.frame(X_s))
+
+assign_pca_km <- augment(fit_pca_km, as.data.frame(X_s))$.pred_cluster
+
+# GMM en PCA (reajuste, ya hecho arriba como fit_gmm)
+assign_pca_gmm <- fit_gmm$classification
+
+if (ncol(X_pca) >= 2) {
+  dfp <- X_pca %>% as_tibble() %>%
+    transmute(PC1, PC2,
+              km = factor(assign_pca_km),
+              gmm = factor(assign_pca_gmm))
+  p1 <- ggplot(dfp, aes(PC1, PC2, color = km)) +
+    geom_point(alpha = .8) + scale_color_manual(values = pal) + labs(title = "PCA+K-means")
+  p2 <- ggplot(dfp, aes(PC1, PC2, color = gmm)) +
+    geom_point(alpha = .8) + scale_color_manual(values = pal) + labs(title = "PCA+GMM")
+  print(p1); print(p2)
+}
+
+# ==============================
+# 8) Evaluación vs etiqueta (si existe)
+# ==============================
+
+if (!is.null(label)) {
+  cat("\n[Eval] K-means vs etiqueta:\n"); print(table(km = assignments, label))
+  cat("\n[Eval] HDBSCAN vs etiqueta:\n"); print(table(hdb = fit_hdb$cluster, label))
+  cat("\n[Eval] DBSCAN (eps_hi) vs etiqueta:\n"); print(table(db = fit_db_hi$cluster, label))
+  cat("\n[Eval] Jerárquico (K=3) vs etiqueta:\n"); print(table(hc3 = cutree(hc, k = 3), label))
+}
+
+cat("\nListo. Gráficas impresas en la sesión de R y tablas en consola. Ajusta rutas/params si lo requieres.\n")
