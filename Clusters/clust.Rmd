@@ -1,0 +1,153 @@
+---
+title: "PCA y FA de Phishing"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+	warning = FALSE,
+	error = F,
+  results='hide'
+)
+
+
+#Cargamos nuestras librerías 
+# Cargamos nuestras librerías
+library(tidyverse)     # ya incluye dplyr, ggplot2, readr, etc.
+library(factoextra)
+library(esquisse)
+library(scatterplot3d)
+library(patchwork)
+library(here)
+library(skimr)
+library(corrplot)
+library(vcd)
+library(ggsci)    
+library(psych)     
+library(grid) 
+library(embed)
+library(scattermore)
+library(cluster)    
+library(knitr)
+library(kableExtra)
+library(fastDummies)
+library(caret)
+
+library(cluster)
+library(dbscan)
+
+
+```
+
+```{r Data}
+data <- read.csv(here("Data", "obesity_clean.csv"))
+data <- data %>%
+  mutate(Gender = as.factor(Gender),
+         CALC = as.factor(CALC),
+         FAVC = as.factor(FAVC),
+         SCC = as.factor(SCC),
+         SMOKE = as.factor(SMOKE),
+         family_history_with_overweight = as.factor(family_history_with_overweight),
+         CAEC = as.factor(CAEC),
+         MTRANS = as.factor(MTRANS),
+         NObeyesdad = as.factor(NObeyesdad),
+         FCVC <- as.factor(FCVC),
+         NCP  <- as.factor(NCP),
+         CH2O <- as.factor(CH2O),
+         FAF  <- as.factor(FAF),
+         TUE  <- as.factor(TUE)
+        
+         
+  )
+summary(data$NObeyesdad)
+
+data_sin_peso <- data %>%
+  select(-NObeyesdad)
+
+
+data_onehot <- fastDummies::dummy_cols(
+  data_sin_peso,
+  remove_first_dummy = FALSE,  
+  remove_selected_columns = TRUE
+)
+```
+
+
+```{r  }
+#Matriz de distancias de Gower
+
+gower_dist <- daisy(data_onehot, metric = "gower")
+db <- dbscan(as.matrix(gower_dist), eps = 0.3, minPts = 6)
+
+```
+
+
+```{r }
+etiquetas <- db$cluster
+# Filtra fuera el ruido (0)
+mask <- etiquetas != 0
+if (sum(mask) < 2 || length(unique(etiquetas[mask])) < 2) {
+  warning("No hay suficientes puntos o clusters (sin contar ruido) para calcular silueta.")
+} else {
+  # Subdistancia para puntos no ruido
+  dist_no_ruido <- as.dist(as.matrix(gower_dist)[mask, mask])
+  cl_no_ruido   <- etiquetas[mask]
+
+  sil <- silhouette(cl_no_ruido, dist_no_ruido)
+  # Promedio global de silueta
+  avg_sil <- mean(sil[, "sil_width"])
+  cat(sprintf("Ancho promedio de silueta (sin ruido): %.3f\n", avg_sil))
+
+  # Plot con factoextra (opcional, es cómodo)
+  fviz_silhouette(sil) +
+    ggplot2::labs(title = "Silueta por cluster (sin ruido)")
+}
+```
+
+
+
+
+
+
+```{r }
+library(FactoMineR)
+
+
+# 2) FAMD (sin la columna de cluster)
+famd <- FAMD(data_onehot, graph = FALSE)
+
+# 3) Coordenadas 2D
+coords <- as.data.frame(famd$ind$coord[, 1:2])
+colnames(coords) <- c("Dim1","Dim2")
+
+plot_df <- cbind(coords, cluster = factor(etiquetas))
+
+# 4) Gráfica
+ggplot(plot_df, aes(Dim1, Dim2, color = cluster)) +
+  geom_point(size = 2.5, alpha = 0.9) +
+  labs(title = "FAMD (FactoMineR) — Visualización 2D de clusters DBSCAN",
+       x = "Dim 1", y = "Dim 2", color = "Cluster") +
+  theme_minimal(base_size = 12)
+
+
+
+```
+
+```{r }
+
+```
+
+```{r }
+
+```
+
+
+
+
+```{r }
+
+```
