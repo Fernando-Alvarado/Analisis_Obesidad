@@ -80,10 +80,18 @@ data_onehot <- fastDummies::dummy_cols(
 ```{r  }
 #Matriz de distancias de Gower
 
-gower_dist <- daisy(data_onehot, metric = "gower")
-db <- dbscan(as.matrix(gower_dist), eps = 0.3, minPts = 6)
+gower_dist <- daisy(data_onehot, metric = "gower") #Calculando nuestra metrica 
+D <- as.dist(gower_dist)
+
+
+db <- dbscan(D, eps = 0.3, minPts = 6)
+
+print(db)
 
 ```
+
+
+
 
 
 ```{r }
@@ -137,9 +145,6 @@ ggplot(plot_df, aes(Dim1, Dim2, color = cluster)) +
 
 ```
 
-```{r }
-
-```
 
 ```{r }
 
