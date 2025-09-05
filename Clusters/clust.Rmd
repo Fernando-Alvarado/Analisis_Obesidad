@@ -77,17 +77,36 @@ data_onehot <- fastDummies::dummy_cols(
 ```
 
 
-```{r  }
+```{r }
 #Matriz de distancias de Gower
+malla_eps <- seq(0.1, 0.5, by = 0.1)
+malla_minPts <- seq(5, 100, by = 5)
+
+# Todas las combinaciones
+malla_param <- expand.grid(eps = malla_eps, minPts = malla_minPts)
+
+# Ver las primeras filas
+head(malla_param, 10)
+
+print(malla_param[[1])
+```
+
+
+```{r  }
+
 
 gower_dist <- daisy(data_onehot, metric = "gower") #Calculando nuestra metrica 
 D <- as.dist(gower_dist)
 
 
-db <- dbscan(D, eps = 0.3, minPts = 6)
+db <- dbscan(D, eps = 0.1, minPts = 112)
 
 print(db)
 
+
+sil <- silhouette(db$cluster, as.dist(gower_dist))
+
+print(mean(sil[, "sil_width"]))
 ```
 
 
@@ -152,7 +171,3 @@ ggplot(plot_df, aes(Dim1, Dim2, color = cluster)) +
 
 
 
-
-```{r }
-
-```
