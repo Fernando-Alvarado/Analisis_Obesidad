@@ -17,7 +17,8 @@ knitr::opts_chunk$set(
 
 #Cargamos nuestras librerías 
 # Cargamos nuestras librerías
-library(tidyverse)     # ya incluye dplyr, ggplot2, readr, etc.
+# Cargamos nuestras librerías
+library(tidyverse)     # incluye dplyr, ggplot2, readr, forcats, etc.
 library(factoextra)
 library(esquisse)
 library(scatterplot3d)
@@ -36,9 +37,8 @@ library(knitr)
 library(kableExtra)
 library(fastDummies)
 library(caret)
-
-library(cluster)
 library(dbscan)
+
 
 
 ```
@@ -79,8 +79,8 @@ data_onehot <- fastDummies::dummy_cols(
 
 ```{r }
 #Matriz de distancias de Gower
-malla_eps <- seq(0.1, 0.5, by = 0.1)
-malla_minPts <- seq(5, 100, by = 5)
+malla_eps <- seq(0, 1, by = 0.1)
+malla_minPts <- seq(1, 50, by = 1)
 
 # Todas las combinaciones
 malla_param <- expand.grid(eps = malla_eps, minPts = malla_minPts)
@@ -88,81 +88,215 @@ malla_param <- expand.grid(eps = malla_eps, minPts = malla_minPts)
 # Ver las primeras filas
 head(malla_param, 10)
 
-print(malla_param[[1])
+print(malla_param$eps[[1]]) #El otro parametros es minPts
+
+nrow(malla_param)
 ```
 
 
-```{r  }
-
+```{r  Db_Scan_todas}
+epsFinal = malla_param$eps[[1]]
+minPtsFinal = malla_param$minPts[[1]]
+siluetaInicial = -1
 
 gower_dist <- daisy(data_onehot, metric = "gower") #Calculando nuestra metrica 
 D <- as.dist(gower_dist)
 
 
-db <- dbscan(D, eps = 0.1, minPts = 112)
+for(i in 1:nrow(malla_param)){
+  db <- dbscan(D, eps = malla_param$eps[[i]], minPts = malla_param$minPts[[i]])
+  sil <- silhouette(db$cluster, as.dist(gower_dist))
+  if (mean(sil[, "sil_width"]) > siluetaInicial) {
+    siluetaInicial = mean(sil[, "sil_width"])
+    epsFinal = malla_param$eps[[i]]
+    minPtsFinal = malla_param$minPts[[i]]
+  }
+}
+print(paste0("Eps seleccionado: ", epsFinal))
+print(paste0("MinPts seleccionado: ", minPtsFinal))
+
+db <- dbscan(D, eps = epsFinal, minPts = minPtsFinal)
+sil <- silhouette(db$cluster, as.dist(gower_dist))
+
+print(mean(sil[, "sil_width"]))
+
+# EPS = 0.2
+# MinPts = 1
+# Silueta = 0.3390998
+```
+
+
+```{r }
+db <- dbscan(D, eps = 0.2, minPts = 1)
+sil <- silhouette(db$cluster, as.dist(gower_dist))
 
 print(db)
-
-
-sil <- silhouette(db$cluster, as.dist(gower_dist))
 
 print(mean(sil[, "sil_width"]))
 ```
 
 
-
-
-
 ```{r }
-etiquetas <- db$cluster
-# Filtra fuera el ruido (0)
-mask <- etiquetas != 0
-if (sum(mask) < 2 || length(unique(etiquetas[mask])) < 2) {
-  warning("No hay suficientes puntos o clusters (sin contar ruido) para calcular silueta.")
-} else {
-  # Subdistancia para puntos no ruido
-  dist_no_ruido <- as.dist(as.matrix(gower_dist)[mask, mask])
-  cl_no_ruido   <- etiquetas[mask]
+mds <- cmdscale(D, k = 2, eig = TRUE)  # k=2 dimensiones
 
-  sil <- silhouette(cl_no_ruido, dist_no_ruido)
-  # Promedio global de silueta
-  avg_sil <- mean(sil[, "sil_width"])
-  cat(sprintf("Ancho promedio de silueta (sin ruido): %.3f\n", avg_sil))
-
-  # Plot con factoextra (opcional, es cómodo)
-  fviz_silhouette(sil) +
-    ggplot2::labs(title = "Silueta por cluster (sin ruido)")
-}
-```
-
-
-
-
-
-
-```{r }
-library(FactoMineR)
-
-
-# 2) FAMD (sin la columna de cluster)
-famd <- FAMD(data_onehot, graph = FALSE)
-
-# 3) Coordenadas 2D
-coords <- as.data.frame(famd$ind$coord[, 1:2])
-colnames(coords) <- c("Dim1","Dim2")
-
-plot_df <- cbind(coords, cluster = factor(etiquetas))
+# 3) Data frame para graficar
+plot_mds <- data.frame(
+  Dim1 = mds$points[, 1],
+  Dim2 = mds$points[, 2],
+  cluster = factor(ifelse(db$cluster == 0, "ruido", paste0("C", db$cluster)))
+)
 
 # 4) Gráfica
-ggplot(plot_df, aes(Dim1, Dim2, color = cluster)) +
-  geom_point(size = 2.5, alpha = 0.9) +
-  labs(title = "FAMD (FactoMineR) — Visualización 2D de clusters DBSCAN",
-       x = "Dim 1", y = "Dim 2", color = "Cluster") +
-  theme_minimal(base_size = 12)
+ggplot(plot_mds, aes(Dim1, Dim2, color = cluster)) +
+  geom_point(alpha = 0.8, size = 2) +
+  labs(title = "DBSCAN (PCoA sobre distancia de Gower)",
+       subtitle = "Proyección consistente con la métrica usada; Ruido = 0",
+       x = "Dimensión 1", y = "Dimensión 2", color = "Cluster") +
+  theme_minimal()
+```
 
+### Quedandonos con solo las variables categoricas
 
+```{r }
+df_cat  <- data_sin_peso %>%
+  select(where(is.factor))
+
+#VIENDOI EL TIPO DE Df_cat
+str(df_cat)
 
 ```
+
+
+```{r }
+# ---------- Paquetes ----------
+# install.packages(c("cluster","dplyr","ggplot2","forcats"))
+
+
+pam_gower_pipeline <- function(df, k_range = 1:12, na_label = "(NA)") {
+  stopifnot(is.data.frame(df))
+
+  # 1) Asegurar categóricas y tratar NA como categoría
+  df_cat <- df %>%
+    mutate(across(everything(), ~ fct_explicit_na(as.factor(.), na_label)))
+
+  # 2) Distancia de Gower
+  D <- daisy(df_cat, metric = "gower")  # disimilaridad en [0,1]
+
+  # 3) Probar k por silhouette con PAM (diss=TRUE porque pasamos distancia)
+  res <- lapply(k_range, function(k) {
+    fit <- pam(D, k = k, diss = TRUE)
+    sil <- silhouette(fit$clustering, D)
+    sil_avg <- mean(sil[, "sil_width"])
+    list(k = k, fit = fit, sil_avg = sil_avg)
+  })
+  best_idx <- which.max(sapply(res, `[[`, "sil_avg"))
+  best <- res[[best_idx]]
+
+  cat("Mejor k:", best$k, " | Silhouette promedio:", round(best$sil_avg, 4), "\n")
+
+  # 4) Etiquetas finales
+  clusters <- factor(best$fit$clustering)
+
+  # 5) Proyección 2D (PCoA/MDS) y gráfico
+  mds <- cmdscale(as.dist(D), k = 2, eig = TRUE)
+  plot_df <- data.frame(
+    Dim1 = mds$points[, 1],
+    Dim2 = mds$points[, 2],
+    cluster = clusters
+  )
+
+  p <- ggplot(plot_df, aes(Dim1, Dim2, color = cluster)) +
+    geom_point(alpha = 0.9, size = 2) +
+    labs(title = paste0("PAM + Gower (k = ", best$k, ")"),
+         subtitle = paste("Silhouette promedio:", round(best$sil_avg, 3)),
+         x = "Dim 1", y = "Dim 2", color = "Cluster") +
+    theme_minimal()
+
+  print(p)
+
+  # 6) Devolver todo lo útil
+  list(
+    clusters = clusters,
+    medoids = best$fit$medoids,   # índices de los representantes
+    silhouette_mean = best$sil_avg,
+    k = best$k,
+    plot_data = plot_df
+  )
+}
+
+# ---------- USO ----------
+# Sustituye TU_DF por tu data frame (solo columnas categóricas)
+out_pam <- pam_gower_pipeline(df_cat, k_range = 2:12)
+head(out_pam$clusters)
+```
+
+
+```{r }
+# ---------- Paquetes ----------
+# install.packages(c("cluster","dplyr","ggplot2","forcats"))
+
+hclust_gower_pipeline <- function(df, k_range = 2:12, method = "average", na_label="(NA)") {
+  stopifnot(is.data.frame(df))
+
+  df_cat <- df %>%
+    mutate(across(everything(), ~ fct_explicit_na(as.factor(.), na_label)))
+  D <- daisy(df_cat, metric = "gower")
+
+  hc <- hclust(as.dist(D), method = method)
+
+  # Evaluar k por silhouette
+  evals <- lapply(k_range, function(k) {
+    cl <- cutree(hc, k = k)
+    sil <- silhouette(cl, D)
+    list(k = k, cl = cl, sil_avg = mean(sil[, "sil_width"]))
+  })
+  best_idx <- which.max(sapply(evals, `[[`, "sil_avg"))
+  best <- evals[[best_idx]]
+
+  cat("Mejor k:", best$k, "| Silhouette promedio:", round(best$sil_avg, 4), "\n")
+
+  # Proyección 2D
+  mds <- cmdscale(as.dist(D), k = 2, eig = TRUE)
+  plot_df <- data.frame(
+    Dim1 = mds$points[, 1],
+    Dim2 = mds$points[, 2],
+    cluster = factor(best$cl)
+  )
+
+  p <- ggplot(plot_df, aes(Dim1, Dim2, color = cluster)) +
+    geom_point(alpha = 0.9, size = 2) +
+    labs(title = paste0("HClust (", method, ") + Gower (k = ", best$k, ")"),
+         subtitle = paste("Silhouette promedio:", round(best$sil_avg, 3)),
+         x = "Dim 1", y = "Dim 2", color = "Cluster") +
+    theme_minimal()
+  print(p)
+
+  list(
+    clusters = factor(best$cl),
+    silhouette_mean = best$sil_avg,
+    k = best$k,
+    hclust = hc,
+    plot_data = plot_df
+  )
+}
+
+# ---------- USO ----------
+out_hc <- hclust_gower_pipeline(df_cat, k_range = 2:12, method = "average")
+head(out_hc$clusters)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 ```{r }
@@ -170,4 +304,14 @@ ggplot(plot_df, aes(Dim1, Dim2, color = cluster)) +
 ```
 
 
+
+```{r }
+
+```
+
+
+
+```{r }
+
+```
 
