@@ -1,0 +1,1760 @@
+---
+title: "PCA y FA de Phishing"
+output: html_document
+---
+
+
+
+
+
+```{r}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+	warning = FALSE,
+	error = F,
+  results='hide'
+)
+
+
+
+suppressPackageStartupMessages({
+ library(tidyverse)
+ library(tidymodels)
+ library(tidyclust)
+ library(GGally)
+ library(ggsci)
+ library(dbscan)
+ library(mclust)
+ library(cluster)
+ library(clusterSim)
+ library(clValid)
+ library(factoextra) 
+ library(ClusterR) 
+ library(NbClust) 
+ library(dplyr) 
+ library(recipes)
+ library(fastDummies) 
+ library(stringr)
+ library(skimr)
+ library(knitr)
+ library(kableExtra)
+ library(webshot2) 
+ library(plot3D) 
+ library(purrr)
+ library(xtable)
+ library(mclust)
+ library(dbscan)
+ library(cluster)
+ library(ggplot2)
+ library(GGally)
+ library(factoextra)
+ library(ggrepel)
+ library(dplyr)
+ library(tidyr)
+ library(purrr)
+ library(plot3D)
+ library(tibble)
+ library(uwot)
+})
+
+set.seed(123)
+
+```
+
+
+
+```{r}
+
+
+
+df <- read.csv("obesity_clean.csv", check.names = FALSE)
+df_obesidad <- read.csv("obesity_clean.csv", check.names = FALSE)
+obesity_labels <- df$NObeyesdad
+
+norm_chr <- function(x) str_squish(str_to_lower(as.character(x)))
+
+df <- df %>%
+ mutate(
+ Gender = norm_chr(Gender),
+ CALC = norm_chr(CALC),
+ FAVC = norm_chr(FAVC),
+ SCC = norm_chr(SCC),
+ SMOKE = norm_chr(SMOKE),
+ family_history_with_overweight = norm_chr(family_history_with_overweight),
+ CAEC = norm_chr(CAEC),
+ MTRANS = norm_chr(MTRANS)
+ )
+
+df <- df %>%
+ mutate(
+ 
+ Gender = factor(Gender, levels = c("female","male")),
+ family_history_with_overweight = factor(family_history_with_overweight, levels = c("no","yes")),
+ FAVC = factor(FAVC, levels = c("no","yes")),
+ SMOKE = factor(SMOKE, levels = c("no","yes")),
+ SCC = factor(SCC, levels = c("no","yes")),
+ MTRANS = factor(MTRANS, levels = c("public_transportation","automobile","walking","motorbike","bike")),
+ 
+ CAEC = factor(CAEC, levels = c("no","sometimes","frequently","always"), ordered = TRUE),
+ CALC = factor(CALC, levels = c("no","sometimes","frequently","always"), ordered = TRUE),
+ 
+ NObeyesdad = factor(NObeyesdad, ordered = TRUE,
+ levels = c("insufficient_weight","normal_weight",
+ "overweight_level_i","overweight_level_ii",
+ "obesity_type_i","obesity_type_ii","obesity_type_iii"))
+ )
+
+df <- df %>% mutate(across(intersect(c("FCVC","NCP","CH2O","FAF","TUE"), names(.)),
+ ~ suppressWarnings(as.numeric(.))))
+
+rec <- recipe(~ ., data = df) %>%
+ update_role(NObeyesdad, new_role = "id") %>% # excluye etiqueta del procesamiento
+ step_ordinalscore(all_ordered_predictors()) %>% # CAEC, CALC -> 1..4
+ step_dummy(all_nominal_predictors(), one_hot = FALSE) %>% # k−1 dummies (evita colinealidad)
+ step_zv(all_predictors()) %>% # quita varianza cero si algún nivel no aparece
+ step_normalize(all_numeric_predictors()) # estandariza numéricas
+
+prep_rec <- prep(rec)
+X_scaled <- bake(prep_rec, new_data = NULL) %>%
+ dplyr::select(-dplyr::any_of("NObeyesdad"))
+
+#
+stopifnot(!anyNA(X_scaled))
+stopifnot(is.numeric(as.matrix(X_scaled)))
+
+
+```
+
+# KMEANS
+
+```{r}
+
+p1 <- fviz_nbclust(X_scaled, kmeans, method = "wss") + labs(subtitle = "Codo (WSS)")
+p2 <- fviz_nbclust(X_scaled, kmeans, method = "silhouette") + labs(subtitle = "Silueta")
+p3 <- fviz_nbclust(X_scaled, kmeans, method = "gap_stat") + labs(subtitle = "Gap statistic")
+print(p1); print(p2); print(p3)
+
+
+nb <- NbClust(
+ data = as.data.frame(X_scaled),
+ distance= "euclidean",
+ min.nc = 2, max.nc = 10,
+ method = "kmeans",
+ index = "all" 
+)
+tab_k <- table(nb$Best.nc[1, ])
+print(tab_k)
+k_star <- as.integer(names(which.max(tab_k)))
+cat("k* sugerido por NbClust:", k_star, "\n")
+
+
+set.seed(123)
+km <- kmeans(X_scaled, centers = k_star, nstart = 50)
+
+if (exists("obesity_labels")) {
+ cat("Tabla clúster vs etiqueta\n")
+ print(table(Cluster = km$cluster, Label = obesity_labels))
+ ari <- adjustedRandIndex(as.integer(km$cluster), as.integer(factor(obesity_labels)))
+ cat("ARI:", round(ari, 3), "\n")
+}
+
+# --- 4) Visualización en 2D con PCA ---
+fviz_cluster(km, data = X_scaled,
+ ellipse.type = "euclid",
+ star.plot = TRUE, repel = TRUE,
+ ggtheme = theme_minimal(),
+ main = paste0("K-means con k = ", k_star))
+
+```
+
+
+```{r}
+vote_tab <- as.data.frame(sort(table(nb$Best.nc[1, ]), decreasing = TRUE))
+colnames(vote_tab) <- c("k", "Votos")
+vote_tab$k <- as.integer(as.character(vote_tab$k))
+
+latex_vote <- kable(
+ vote_tab, format = "latex", booktabs = TRUE,
+ col.names = c("$k$", "Votos"),
+ caption = "Voto de índices de \\texttt{NbClust} (número de índices que proponen cada $k$).",
+) |>
+ kable_styling(latex_options = c("hold_position"))
+
+cat(latex_vote) 
+
+idx_names <- colnames(nb$Best.nc)
+k_star <- as.integer(nb$Best.nc[1, ])
+score <- suppressWarnings(as.numeric(nb$Best.nc[2, ])) 
+
+res_idx <- tibble(
+ Indice = idx_names,
+ k_opt = k_star,
+ Valor = score
+) |>
+ arrange(k_opt, Indice) |>
+ mutate(Valor = ifelse(is.na(Valor), NA, round(Valor, 4)))
+
+latex_idx <- kable(
+ res_idx, format = "latex", booktabs = TRUE,
+ col.names = c("\\textbf{Índice}", "$k^{*}$", "\\textbf{Valor del criterio}"),
+ caption = "Mejor $k$ por índice en \\texttt{NbClust}."
+) |>
+ kable_styling(latex_options = c("hold_position"))
+
+cat(latex_idx)
+
+```
+
+```{r}
+
+
+
+
+clusters <- if (exists("clusters")) clusters else if (exists("km")) km$cluster else if (exists("kmeans_result")) kmeans_result$cluster else stop("Define 'clusters' (p.ej., km$cluster).")
+clusters <- as.factor(clusters)
+k_title <- nlevels(clusters)
+
+
+pca <- prcomp(X_scaled, center = FALSE, scale. = FALSE)
+var_exp <- (pca$sdev^2) / sum(pca$sdev^2)
+cum_exp <- cumsum(var_exp)
+q_needed <- which(cum_exp >= 0.90)[1]
+q_plot <- min(6, ifelse(is.na(q_needed), ncol(pca$x), q_needed))
+
+pc_labels <- sprintf("PC%d (%.1f%%)", seq_len(q_plot), 100 * var_exp[seq_len(q_plot)])
+dfp <- as.data.frame(pca$x[, seq_len(q_plot), drop = FALSE])
+names(dfp) <- pc_labels
+dfp$cluster <- clusters
+
+
+g_pairs <- GGally::ggpairs(
+ dfp[, c(pc_labels, "cluster")],
+ aes(color = cluster, fill = cluster),
+ upper = list(continuous = GGally::wrap("points", alpha = 0.55, size = 0.6)),
+ lower = list(continuous = "blank"),
+ diag = list(continuous = "densityDiag"),
+ progress = FALSE
+) +
+ scale_color_npg() + scale_fill_npg() +
+ theme_minimal(base_size = 11) +
+ labs(
+ title = sprintf("Matriz de pares de PCs (k = %d)", k_title),
+ subtitle = sprintf("PCs mostradas: %s | Varianza acumulada: %.1f%%",
+ paste(pc_labels, collapse = ", "),
+ 100 * cum_exp[q_plot])
+ )
+print(g_pairs)
+
+
+D <- dist(X_scaled, method = "euclidean")
+sil <- silhouette(as.integer(clusters), D)
+
+sil_df <- data.frame(
+ cluster = factor(sil[, 1], levels = levels(clusters)),
+ width = sil[, 3]
+) |>
+ group_by(cluster) |>
+ arrange(width, .by_group = TRUE) |>
+ mutate(idx = row_number())
+
+sil_mean <- mean(sil_df$width)
+
+g_sil <- ggplot(sil_df, aes(x = idx, y = width, fill = cluster)) +
+ geom_col(width = 1) +
+ coord_flip() +
+ facet_wrap(~ cluster, scales = "free_y") +
+ scale_fill_npg() +
+ theme_minimal(base_size = 11) +
+ labs(
+ title = "Silhouette por clúster",
+ subtitle = sprintf("Silhouette promedio global: %.3f", sil_mean),
+ x = "Observaciones (ordenadas por width)", y = "Silhouette width"
+ ) +
+ guides(fill = "none")
+print(g_sil)
+
+set.seed(123)
+U <- uwot::umap(X_scaled, n_neighbors = 15, min_dist = 0.1, metric = "euclidean", n_components = 2)
+umap_df <- data.frame(UMAP1 = U[,1], UMAP2 = U[,2], cluster = clusters)
+
+k_nn <- 15
+knn_hd <- FNN::get.knn(as.matrix(X_scaled), k = k_nn)$nn.index
+knn_emb <- FNN::get.knn(as.matrix(U), k = k_nn)$nn.index
+overlap <- sapply(seq_len(nrow(X_scaled)), function(i){
+ length(intersect(knn_hd[i, ], knn_emb[i, ])) / k_nn
+})
+preservation <- mean(overlap)
+
+g_umap <- ggplot(umap_df, aes(UMAP1, UMAP2, color = cluster)) +
+ geom_point(alpha = 0.80, size = 1.3) +
+ 
+ stat_ellipse(aes(fill = cluster), geom = "polygon", type = "norm",
+ alpha = 0.12, color = NA, show.legend = FALSE) +
+ scale_color_npg() + scale_fill_npg() +
+ theme_minimal(base_size = 11) +
+ labs(
+ title = "UMAP de X_scaled",
+ subtitle = sprintf("Preservación kNN (k = %d): %.1f%%", k_nn, 100 * preservation),
+ x = "UMAP1", y = "UMAP2"
+ ) +
+ guides(fill = "none")
+print(g_umap)
+
+
+```
+
+
+```{r}
+
+
+
+
+clusters <- if (exists("clusters")) clusters else if (exists("km")) km$cluster else if (exists("kmeans_result")) kmeans_result$cluster else stop("Define 'clusters'.")
+clusters <- as.factor(clusters)
+k_title <- nlevels(clusters)
+
+palette_safe <- function(k) {
+ base <- ggsci::pal_npg("nrc")(max(k, 3)) 
+ base[seq_len(k)]
+}
+pal <- palette_safe(k_title)
+
+
+pca3 <- prcomp(X_scaled, center = FALSE, scale. = FALSE)
+vexp <- (pca3$sdev^2) / sum(pca3$sdev^2)
+labs3 <- sprintf("PC%s (%.1f%%)", 1:3, 100 * vexp[1:3])
+cum3 <- 100 * sum(vexp[1:3])
+
+dfp3 <- as.data.frame(pca3$x[, 1:3, drop = FALSE])
+names(dfp3) <- c("PC1","PC2","PC3")
+dfp3$cluster <- clusters
+
+
+cent <- dfp3 |>
+ group_by(cluster) |>
+ summarise(across(c(PC1,PC2,PC3), mean), .groups = "drop")
+
+
+p3d <- plot_ly(dfp3, x = ~PC1, y = ~PC2, z = ~PC3,
+ color = ~cluster, colors = pal,
+ type = "scatter3d", mode = "markers",
+ marker = list(size = 3, opacity = 0.85)) |>
+ add_markers(data = cent, x = ~PC1, y = ~PC2, z = ~PC3,
+ inherit = FALSE, mode = "markers",
+ marker = list(size = 7, symbol = "diamond", opacity = 1, line = list(width = 0)),
+ showlegend = FALSE, name = "Centroides") |>
+ layout(
+ scene = list(
+ xaxis = list(title = labs3[1]),
+ yaxis = list(title = labs3[2]),
+ zaxis = list(title = labs3[3])
+ ),
+ title = sprintf("Clustering en PCA 3D (k = %d) — Varianza PC1–PC3: %.1f%%", k_title, cum3)
+ )
+
+p3d 
+
+
+ok <- TRUE
+try({
+ htmlwidgets::saveWidget(p3d, file = "pca3d_clusters.html", selfcontained = TRUE)
+}, silent = TRUE) -> res
+if (inherits(res, "try-error")) ok <- FALSE
+
+if (!ok) {
+ htmlwidgets::saveWidget(p3d, file = "pca3d_clusters.html",
+ selfcontained = FALSE, libdir = "pca3d_libs")
+ message("Guardado sin Pandoc: 'pca3d_clusters.html' + carpeta 'pca3d_libs/'.")
+}
+
+htmlwidgets::saveWidget(p3d, file = "plot3d.html", selfcontained = FALSE)
+
+
+webshot2::webshot("plot3d.html",
+ file = "plot3d.png",
+ vwidth = 1400, 
+ vheight = 900,
+ delay = 0.5) 
+
+
+```
+
+
+```{r}
+
+
+
+
+stopifnot(exists("df_obesidad"))
+stopifnot(exists("clusters"), length(clusters) == nrow(df_obesidad))
+
+
+df_full <- df_obesidad %>% mutate(cluster = factor(clusters))
+
+lv_yesno <- c("no","yes")
+df_full <- df_full %>%
+ mutate(
+ 
+ Gender = factor(Gender),
+ family_history_with_overweight = factor(family_history_with_overweight, levels = lv_yesno),
+ FAVC = factor(FAVC, levels = lv_yesno),
+ SMOKE = factor(SMOKE, levels = lv_yesno),
+ SCC = factor(SCC, levels = lv_yesno),
+
+ 
+ CAEC = if (is.numeric(CAEC)) factor(CAEC, levels = c(0,1,2,3),
+ labels = c("no","Sometimes","Frequently","Always"), ordered = TRUE)
+ else factor(CAEC, levels = c("no","Sometimes","Frequently","Always"), ordered = TRUE),
+ CALC = if (is.numeric(CALC)) factor(CALC, levels = c(0,1,2,3),
+ labels = c("no","Sometimes","Frequently","Always"), ordered = TRUE)
+ else factor(CALC, levels = c("no","Sometimes","Frequently","Always"), ordered = TRUE),
+ FCVC = suppressWarnings(as.numeric(FCVC)),
+ NCP = suppressWarnings(as.numeric(NCP)),
+ CH2O = suppressWarnings(as.numeric(CH2O)),
+ FAF = suppressWarnings(as.numeric(FAF)),
+ TUE = suppressWarnings(as.numeric(TUE)),
+
+ 
+ MTRANS = factor(MTRANS),
+
+ 
+ NObeyesdad = factor(
+ NObeyesdad,
+ levels = c("Insufficient_Weight","Normal_Weight",
+ "Overweight_Level_I","Overweight_Level_II",
+ "Obesity_Type_I","Obesity_Type_II","Obesity_Type_III"),
+ ordered = TRUE
+ )
+ )
+
+
+vars_cont <- c("Age","Height","Weight")
+vars_ord <- c("FCVC","NCP","CH2O","FAF","TUE","CAEC","CALC")
+vars_bin <- c("Gender","family_history_with_overweight","FAVC","SMOKE","SCC")
+var_nom <- "MTRANS"
+var_y <- "NObeyesdad" 
+
+
+tab_cont <- df_full %>%
+ select(all_of(c("cluster", vars_cont))) %>%
+ pivot_longer(-cluster, names_to = "Variable", values_to = "valor") %>%
+ group_by(cluster, Variable) %>%
+ summarise(
+ n = dplyr::n(),
+ mean = mean(valor, na.rm = TRUE),
+ sd = sd(valor, na.rm = TRUE),
+ median = median(valor, na.rm = TRUE),
+ p25 = quantile(valor, 0.25, na.rm = TRUE),
+ p75 = quantile(valor, 0.75, na.rm = TRUE),
+ .groups = "drop"
+ ) %>%
+ arrange(Variable, cluster)
+
+
+make_ord_dist <- function(df, var){
+ v <- df[[var]]
+ if (is.numeric(v)) {
+ df %>%
+ transmute(cluster, level = as.character(v)) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>% mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = var) %>%
+ select(Variable, cluster, level, n, pct)
+ } else {
+ df %>%
+ transmute(cluster, level = as.character(.data[[var]])) %>% 
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>% mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = var) %>%
+ select(Variable, cluster, level, n, pct)
+ }
+}
+tab_ord_dist <- dplyr::bind_rows(lapply(vars_ord, function(v) make_ord_dist(df_full, v))) %>%
+ arrange(Variable, cluster, level)
+
+
+make_ord_sum <- function(df, var){
+ v <- df[[var]]
+ u <- if (is.ordered(v)) as.numeric(v) else suppressWarnings(as.numeric(v))
+ tibble(cluster = df$cluster, valor = u) %>%
+ group_by(cluster) %>%
+ summarise(
+ n = dplyr::n(),
+ median = median(valor, na.rm = TRUE),
+ p25 = quantile(valor, 0.25, na.rm = TRUE),
+ p75 = quantile(valor, 0.75, na.rm = TRUE),
+ mean = mean(valor, na.rm = TRUE),
+ .groups = "drop"
+ ) %>%
+ mutate(Variable = var) %>%
+ select(Variable, cluster, n, median, p25, p75, mean)
+}
+tab_ord_sum <- dplyr::bind_rows(lapply(vars_ord, function(v) make_ord_sum(df_full, v))) %>%
+ arrange(Variable, cluster)
+
+
+tab_bin <- dplyr::bind_rows(lapply(vars_bin, function(v){
+ df_full %>%
+ transmute(cluster, level = as.character(.data[[v]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>% mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = v) %>%
+ select(Variable, cluster, level, n, pct)
+})) %>%
+ arrange(Variable, cluster, level)
+
+
+tab_mtrans <- df_full %>%
+ transmute(cluster, level = as.character(.data[[var_nom]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>% mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = var_nom) %>%
+ select(Variable, cluster, level, n, pct) %>%
+ arrange(cluster, level)
+
+
+tab_y <- df_full %>%
+ transmute(cluster, level = as.character(.data[[var_y]])) %>%
+ tidyr::replace_na(list(level = "(NA)")) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>% mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ arrange(cluster, level) %>%
+ mutate(Variable = var_y) %>%
+ select(Variable, cluster, level, n, pct)
+
+
+make_xtable <- function(df, caption, label, digits = NULL, align = NULL) {
+ x <- xtable(df, caption = caption, label = label, digits = digits, align = align)
+ print(x, include.rownames = FALSE, caption.placement = "bottom", booktabs = TRUE)
+}
+
+make_xtable(tab_cont,
+ caption = "Variables continuas por clúster (media, desviación, mediana e IQR).",
+ label = "tab:cont-cluster",
+ digits = c(0,0,0,0,2,2,2,2,2))
+
+make_xtable(tab_ord_sum,
+ caption = "Resumen de variables ordinales por clúster (mediana, IQR y media; ordinales convertidas a códigos numéricos para el resumen).",
+ label = "tab:ord-resumen",
+ digits = c(0,0,0,0,2,2,2,2))
+
+make_xtable(tab_ord_dist,
+ caption = "Distribución por niveles de variables ordinales por clúster (porcentajes dentro de clúster).",
+ label = "tab:ord-dist",
+ digits = c(0,0,0,0,0,3))
+
+make_xtable(tab_bin,
+ caption = "Distribución por niveles en variables binarias por clúster (porcentajes dentro de clúster).",
+ label = "tab:bin-dist",
+ digits = c(0,0,0,0,0,3))
+
+make_xtable(tab_mtrans,
+ caption = "Distribución del medio de transporte (MTRANS) por clúster.",
+ label = "tab:mtrans",
+ digits = c(0,0,0,0,0,3))
+
+make_xtable(tab_y,
+ caption = "Distribución de \\texttt{NObeyesdad} por clúster (solo para interpretación; no se usó para entrenar el clúster).",
+ label = "tab:nobeyesdad",
+ digits = c(0,0,0,0,0,3))
+
+```
+
+# DBSCAN
+
+```{r}
+
+stopifnot(exists("X_scaled"), exists("df_obesidad"))
+
+X_mat <- as.matrix(X_scaled)
+
+
+p <- ncol(X_mat)
+n <- nrow(X_mat)
+
+
+minPts_grid <- unique(pmin(pmax(round(seq(p+1, 2*p, length.out = 6)), 3), n-1))
+minPts0 <- minPts_grid[1]
+
+
+knn_d <- dbscan::kNNdist(X_mat, k = minPts0)
+eps_sug <- as.numeric(quantile(knn_d, probs = c(.70,.75,.80,.85,.90,.95,.99)))
+eps_grid <- sort(unique(round(eps_sug, 3)))
+
+message("minPts_grid = {", paste(minPts_grid, collapse=", "), "}")
+message("eps_grid = {", paste(eps_grid, collapse=", "), "}")
+
+
+```
+
+
+```{r}
+
+dbscan::kNNdistplot(X_mat, k = minPts0)
+abline(h = eps_grid, lty = 2, col = "steelblue")
+
+
+```
+
+
+```{r}
+evals <- list()
+
+for (mpts in minPts_grid) {
+ 
+ eps_grid_m <- eps_grid
+ 
+ for (eps in eps_grid_m) {
+ fit <- try(dbscan::dbscan(X_mat, eps = eps, minPts = mpts), silent = TRUE)
+ if (inherits(fit, "try-error")) next
+ 
+ cl <- fit$cluster
+ n_noise <- sum(cl == 0)
+ noise_frac <- n_noise / length(cl)
+ 
+ 
+ sil_avg <- NA_real_
+ if (length(setdiff(unique(cl), 0L)) >= 2) {
+ keep <- cl != 0
+ D <- dist(X_mat[keep, , drop = FALSE], method = "euclidean")
+ sil <- cluster::silhouette(as.integer(factor(cl[keep])), D)
+ sil_avg <- mean(sil[, "sil_width"])
+ }
+ 
+ evals[[length(evals)+1]] <- tibble(
+ eps = eps, minPts = mpts,
+ n_clusters = length(setdiff(unique(cl), 0L)),
+ noise_frac = noise_frac,
+ sil_avg = sil_avg
+ )
+ }
+}
+
+eval_df <- bind_rows(evals) %>%
+ arrange(desc(sil_avg), noise_frac, desc(n_clusters))
+print(eval_df, n = Inf)
+
+
+best <- eval_df %>%
+ arrange(desc(sil_avg), noise_frac, desc(n_clusters)) %>%
+ slice(1)
+best
+
+```
+
+```{r}
+db_best <- dbscan::dbscan(X_mat, eps = best$eps, minPts = best$minPts)
+clusters_db <- db_best$cluster
+table(clusters_db)
+
+
+```
+
+
+
+```{r}
+
+
+
+cl_fac <- factor(ifelse(clusters_db == 0L, "noise", clusters_db))
+n_levels <- nlevels(cl_fac)
+pal <- pal_aaas()(max(3, n_levels))
+col_map <- setNames(pal[seq_len(n_levels)], levels(cl_fac))
+pt_cols <- unname(col_map[as.character(cl_fac)])
+
+
+pca <- prcomp(X_mat, center = FALSE, scale. = FALSE)
+var_exp <- (pca$sdev^2) / sum(pca$sdev^2)
+
+df_pca <- tibble(
+ PC1 = pca$x[, 1],
+ PC2 = pca$x[, 2],
+ PC3 = pca$x[, 3],
+ cluster = cl_fac
+)
+
+
+pc_names <- c(
+ sprintf("PC1 (%.1f%%)", 100 * var_exp[1]),
+ sprintf("PC2 (%.1f%%)", 100 * var_exp[2]),
+ sprintf("PC3 (%.1f%%)", 100 * var_exp[3])
+)
+df_pairs <- df_pca %>% select(PC1, PC2, PC3, cluster)
+names(df_pairs)[1:3] <- pc_names
+
+g_pairs <- ggpairs(
+ df_pairs,
+ columns = 1:3,
+ mapping = aes(color = cluster, alpha = 0.8),
+ upper = list(continuous = "points"),
+ diag = list(continuous = "densityDiag"),
+ lower = list(continuous = "points")
+) +
+ theme_minimal(base_size = 11) +
+ scale_color_manual(values = col_map) +
+ ggtitle(
+ if (exists("best")) {
+ sprintf("DBSCAN (eps=%.3f, minPts=%d). Var. explicada PC1-3: %.1f%%",
+ best$eps, best$minPts, 100 * sum(var_exp[1:3]))
+ } else {
+ sprintf("DBSCAN. Var. explicada PC1-3: %.1f%%", 100 * sum(var_exp[1:3]))
+ }
+ )
+
+
+print(g_pairs)
+ggsave("dbscan_pairs_pca.png", plot = g_pairs, width = 9, height = 7, dpi = 300)
+
+
+uniq_nz <- setdiff(unique(clusters_db), 0L)
+if (length(uniq_nz) >= 2L) {
+ keep <- clusters_db != 0L
+ D <- dist(X_mat[keep, , drop = FALSE], method = "euclidean")
+ sil <- cluster::silhouette(as.integer(factor(clusters_db[keep])), D)
+ p_sil <- fviz_silhouette(sil) +
+ theme_minimal() +
+ ggtitle("Silueta DBSCAN (sin ruido)")
+ print(p_sil)
+ ggsave("dbscan_silhouette.png", plot = p_sil, width = 8, height = 5.5, dpi = 300)
+} else {
+ message("Silueta omitida: menos de 2 clústeres distintos (excluyendo ruido).")
+}
+
+
+set.seed(123)
+emb2 <- uwot::umap(
+ X_mat, n_neighbors = 15, min_dist = 0.15,
+ metric = "euclidean", n_components = 2, verbose = FALSE
+)
+df_umap <- tibble(
+ UMAP1 = emb2[, 1],
+ UMAP2 = emb2[, 2],
+ cluster = cl_fac
+)
+
+g_umap <- ggplot(df_umap, aes(UMAP1, UMAP2, color = cluster)) +
+ geom_point(alpha = 0.8, size = 1.2) +
+ scale_color_manual(values = col_map) +
+ theme_minimal(base_size = 11) +
+ ggtitle(
+ if (exists("best")) {
+ sprintf("UMAP coloreado por clúster (DBSCAN: eps=%.3f, minPts=%d)", best$eps, best$minPts)
+ } else {
+ "UMAP coloreado por clúster (DBSCAN)"
+ }
+ )
+
+
+print(g_umap)
+ggsave("dbscan_umap2d.png", plot = g_umap, width = 8, height = 6, dpi = 300)
+
+xlab3 <- sprintf("PC1 (%.1f%%)", 100 * var_exp[1])
+ylab3 <- sprintf("PC2 (%.1f%%)", 100 * var_exp[2])
+zlab3 <- sprintf("PC3 (%.1f%%)", 100 * var_exp[3])
+
+png("dbscan_pca3d.png", width = 1800, height = 1400, res = 220)
+par(mar = c(4.5, 4.5, 3, 1))
+plot3D::scatter3D(
+ x = df_pca$PC1, y = df_pca$PC2, z = df_pca$PC3,
+ colvar = NULL, col = pt_cols, pch = 19, cex = 0.6,
+ xlab = xlab3, ylab = ylab3, zlab = zlab3,
+ main = if (exists("best")) {
+ sprintf("PCA 3D (DBSCAN: eps=%.3f, minPts=%d)", best$eps, best$minPts)
+ } else {
+ "PCA 3D (DBSCAN)"
+ },
+ bty = "g", ticktype = "detailed"
+)
+legend("topright", inset = 0.02, title = "cluster",
+ legend = levels(cl_fac), col = col_map, pch = 19, cex = 0.8)
+dev.off()
+
+
+```
+
+
+```{r}
+
+stopifnot(exists("df_obesidad"), exists("clusters_db"))
+stopifnot(nrow(df_obesidad) == length(clusters_db))
+
+
+df_res <- df_obesidad %>%
+ mutate(cluster = factor(ifelse(clusters_db == 0L, "noise", clusters_db)))
+
+
+cont_vars <- c("Age", "Height", "Weight")
+missing_cont <- setdiff(cont_vars, names(df_res))
+if (length(missing_cont) > 0) {
+ stop("Faltan variables continuas en df_obesidad: ", paste(missing_cont, collapse=", "))
+}
+
+tab_cont <- df_res %>%
+ group_by(cluster) %>%
+ summarise(
+ across(
+ all_of(cont_vars),
+ list(
+ n = ~ sum(!is.na(.)),
+ mean = ~ mean(., na.rm = TRUE),
+ sd = ~ sd(., na.rm = TRUE),
+ median = ~ median(., na.rm = TRUE),
+ p25 = ~ quantile(., 0.25, na.rm = TRUE),
+ p75 = ~ quantile(., 0.75, na.rm = TRUE)
+ ),
+ .names = "{.col}_{.fn}"
+ ),
+ .groups = "drop"
+ )
+
+
+ord_vars <- c("CAEC","CALC","CH2O","FAF","FCVC","NCP","TUE")
+missing_ord <- setdiff(ord_vars, names(df_res))
+if (length(missing_ord) > 0) {
+ stop("Faltan variables ordinales en df_obesidad: ", paste(missing_ord, collapse=", "))
+}
+
+tab_ord <- map_dfr(ord_vars, function(v) {
+ df_res %>%
+ mutate(level = as.character(.data[[v]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>%
+ mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = v, .before = 1)
+})
+
+
+bin_vars <- c("FAVC","Gender","SCC","SMOKE","family_history_with_overweight")
+missing_bin <- setdiff(bin_vars, names(df_res))
+if (length(missing_bin) > 0) {
+ stop("Faltan variables binarias en df_obesidad: ", paste(missing_bin, collapse=", "))
+}
+
+tab_bin <- map_dfr(bin_vars, function(v) {
+ df_res %>%
+ mutate(level = as.character(.data[[v]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>%
+ mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = v, .before = 1)
+})
+
+
+if (!"MTRANS" %in% names(df_res)) stop("Falta la variable nominal MTRANS en df_obesidad.")
+tab_mtrans <- df_res %>%
+ mutate(level = as.character(.data[["MTRANS"]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>%
+ mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = "MTRANS", .before = 1)
+
+
+tab_nob <- NULL
+if ("NObeyesdad" %in% names(df_res)) {
+ tab_nob <- df_res %>%
+ mutate(level = as.character(.data[["NObeyesdad"]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>%
+ mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = "NObeyesdad", .before = 1)
+}
+
+
+options(xtable.comment = FALSE)
+
+
+if (exists("eval_df")) {
+ print(xtable(
+ eval_df, digits = 3,
+ caption = "DBSCAN: rejilla de hiperpar\\'ametros y m\\'etrica de calidad.",
+ label = "tab:dbscan-grid"
+ ), include.rownames = FALSE)
+}
+
+print(xtable(
+ tab_cont, digits = 3,
+ caption = "Variables continuas por cl\\'uster (DBSCAN).",
+ label = "tab:dbscan-cont"
+), include.rownames = FALSE)
+
+
+for (v in ord_vars) {
+ sub <- tab_ord %>% filter(Variable == v)
+ print(xtable(
+ sub, digits = 3,
+ caption = paste0("Distribuci\\'on de niveles por cl\\'uster (", v, ")"),
+ label = paste0("tab:dbscan-ord-", tolower(v))
+ ), include.rownames = FALSE)
+}
+
+
+for (v in bin_vars) {
+ sub <- tab_bin %>% filter(Variable == v)
+ print(xtable(
+ sub, digits = 3,
+ caption = paste0("Distribuci\\'on por niveles (", v, ") por cl\\'uster"),
+ label = paste0("tab:dbscan-bin-", tolower(v))
+ ), include.rownames = FALSE)
+}
+
+print(xtable(
+ tab_mtrans, digits = 3,
+ caption = "Distribuci\\'on del medio de transporte (MTRANS) por cl\\'uster.",
+ label = "tab:dbscan-mtrans"
+), include.rownames = FALSE)
+
+if (!is.null(tab_nob)) {
+ print(xtable(
+ tab_nob, digits = 3,
+ caption = "Distribuci\\'on de \\texttt{NObeyesdad} por cl\\'uster (validaci\\'on externa).",
+ label = "tab:dbscan-nobeyesdad"
+ ), include.rownames = FALSE)
+}
+
+
+```
+
+# GMM
+
+```{r}
+
+bic_obj <- mclustBIC(X_scaled, G = 1:10)
+
+
+bic_mat <- as.matrix(bic_obj) 
+bic_df <- as.data.frame(as.table(bic_mat), stringsAsFactors = FALSE)
+colnames(bic_df) <- c("model", "G", "BIC")
+
+
+bic_df <- bic_df %>%
+ mutate(
+ G = suppressWarnings(as.integer(as.character(G))),
+ BIC = as.numeric(BIC)
+ ) %>%
+ filter(is.finite(BIC))
+
+
+bic_df <- bic_df %>%
+ arrange(desc(BIC)) %>%
+ mutate(
+ deltaBIC = BIC - max(BIC, na.rm = TRUE),
+ weight = {
+ w <- exp(0.5 * deltaBIC)
+ w / sum(w)
+ }
+ ) %>%
+ mutate(across(where(is.numeric), ~ round(.x, 3)))
+
+
+bic_top <- bic_df %>% slice(1:20)
+
+
+best_ij <- which(bic_mat == max(bic_mat, na.rm = TRUE), arr.ind = TRUE)[1, ]
+best_model <- rownames(bic_mat)[best_ij[1]]
+best_G <- as.integer(colnames(bic_mat)[best_ij[2]])
+
+cat("Mejor modelo por BIC:\n")
+print(list(model = best_model, G = best_G,
+ BIC = max(bic_mat, na.rm = TRUE)))
+
+
+
+options(xtable.comment = FALSE)
+print(
+ xtable(
+ bic_top,
+ caption = "GMM: modelos candidatos ordenados por BIC (top 20).",
+ label = "tab:gmm-bic"
+ ),
+ include.rownames = FALSE
+)
+
+
+
+```
+
+
+```{r}
+
+clusters_gmm <- factor(clusters_gmm)
+k <- nlevels(clusters_gmm)
+pal <- pal_aaas()(max(3, k)) 
+lab_clusters <- paste0("C", levels(clusters_gmm))
+
+
+dir.create("fig", showWarnings = FALSE)
+
+
+pca <- prcomp(X_scaled, center = FALSE, scale. = FALSE)
+var_exp <- (pca$sdev^2) / sum(pca$sdev^2)
+
+df_pca6 <- as_tibble(pca$x[, 1:6]) %>%
+ mutate(cluster = clusters_gmm)
+
+g_pairs_6 <- ggpairs(
+ df_pca6 %>% select(PC1, PC2, PC3, PC4, PC5, PC6, cluster),
+ columns = 1:6,
+ mapping = aes(color = cluster, alpha = 0.8),
+ upper = list(continuous = "points"),
+ diag = list(continuous = "densityDiag"),
+ lower = list(continuous = "points")
+) +
+ theme_minimal(base_size = 11) +
+ scale_color_manual(values = pal, labels = lab_clusters) +
+ ggtitle(sprintf(
+ "GMM (%s, G=%d) · Var. explicada: PC1=%.1f%%, PC2=%.1f%%, PC3=%.1f%%, PC4=%.1f%%, PC5=%.1f%%, PC6=%.1f%%",
+ if (!is.null(gmm$modelName)) gmm$modelName else "—",
+ if (!is.null(gmm$G)) gmm$G else k,
+ 100*var_exp[1], 100*var_exp[2], 100*var_exp[3],
+ 100*var_exp[4], 100*var_exp[5], 100*var_exp[6]
+ )) +
+ labs(color = "Clúster")
+
+ggsave("fig/gmm_pairs_pc1_6.png", g_pairs_6, width = 14, height = 10, dpi = 200)
+
+
+D <- dist(X_scaled, method = "euclidean")
+sil <- cluster::silhouette(as.integer(clusters_gmm), D)
+
+g_sil <- fviz_silhouette(sil) +
+ theme_minimal(base_size = 11) +
+ ggtitle("GMM: Silueta por clúster") +
+ labs(x = "Observación", y = "Anchura de silueta")
+ggsave("fig/gmm_silhouette.png", g_sil, width = 8, height = 5, dpi = 200)
+
+
+set.seed(123)
+emb2 <- uwot::umap(
+ X_scaled, n_neighbors = 15, min_dist = 0.15,
+ n_components = 2, metric = "euclidean", verbose = FALSE
+)
+df_umap2 <- tibble(UMAP1 = emb2[,1], UMAP2 = emb2[,2], cluster = clusters_gmm)
+
+g_umap2 <- ggplot(df_umap2, aes(UMAP1, UMAP2, color = cluster)) +
+ geom_point(alpha = 0.85, size = 1.2) +
+ scale_color_manual(values = pal, labels = lab_clusters) +
+ theme_minimal(base_size = 12) +
+ labs(color = "Clúster (GMM)") +
+ ggtitle("GMM: UMAP 2D coloreado por clúster")
+ggsave("fig/gmm_umap2.png", g_umap2, width = 8, height = 6, dpi = 200)
+
+
+set.seed(123)
+emb3 <- uwot::umap(
+ X_scaled, n_neighbors = 15, min_dist = 0.15,
+ n_components = 3, metric = "euclidean", verbose = FALSE
+)
+
+png("fig/gmm_umap3d.png", width = 1600, height = 1200, res = 150)
+scatter3D(
+ x = emb3[,1], y = emb3[,2], z = emb3[,3],
+ col = pal[as.integer(clusters_gmm)], colkey = FALSE, # <- sin barra lateral
+ pch = 19, cex = 0.6, xlab = "UMAP1", ylab = "UMAP2", zlab = "UMAP3",
+ bty = "g", box = TRUE, ticktype = "detailed",
+ main = "GMM: UMAP 3D coloreado por clúster"
+)
+legend("topright", legend = lab_clusters,
+ col = pal[seq_len(k)], pch = 16, cex = 0.9, bty = "n")
+dev.off()
+
+
+png("fig/gmm_pca3d.png", width = 1600, height = 1200, res = 150)
+scatter3D(
+ x = pca$x[,1], y = pca$x[,2], z = pca$x[,3],
+ col = pal[as.integer(clusters_gmm)], colkey = FALSE, # <- sin barra lateral
+ pch = 19, cex = 0.6,
+ xlab = sprintf("PC1 (%.1f%%)", 100*var_exp[1]),
+ ylab = sprintf("PC2 (%.1f%%)", 100*var_exp[2]),
+ zlab = sprintf("PC3 (%.1f%%)", 100*var_exp[3]),
+ bty = "g", box = TRUE, ticktype = "detailed",
+ main = "GMM: PCA 3D (PC1–PC3) coloreado por clúster"
+)
+legend("topright", legend = lab_clusters,
+ col = pal[seq_len(k)], pch = 16, cex = 0.9, bty = "n")
+dev.off()
+
+
+draw_graph3d <- TRUE
+if (draw_graph3d) {
+ df_pca3 <- as_tibble(pca$x[, 1:3]) %>% mutate(cluster = clusters_gmm)
+ centroids <- df_pca3 %>%
+ group_by(cluster) %>%
+ summarize(cx = mean(PC1), cy = mean(PC2), cz = mean(PC3), .groups = "drop")
+
+
+ coords <- as.matrix(centroids[, c("cx", "cy", "cz")])
+ C <- as.matrix(dist(coords, method = "euclidean"))
+
+
+ n <- nrow(coords)
+ if (n >= 2) {
+ in_mst <- rep(FALSE, n); in_mst[1] <- TRUE
+ mst_pairs <- matrix(NA_integer_, n - 1L, 2L)
+ for (e in 1:(n - 1L)) {
+ best_w <- Inf; best_i <- NA_integer_; best_j <- NA_integer_
+ I <- which(in_mst)
+ J <- which(!in_mst)
+ for (i in I) {
+ if (length(J) == 0) break
+ j_star <- J[which.min(C[i, J])]
+ w <- C[i, j_star]
+ if (w < best_w) { best_w <- w; best_i <- i; best_j <- j_star }
+ }
+ in_mst[best_j] <- TRUE
+ mst_pairs[e, ] <- c(best_i, best_j)
+ }
+ } else {
+ mst_pairs <- matrix(numeric(0), ncol = 2)
+ }
+
+ png("fig/gmm_graph3d.png", width = 1600, height = 1200, res = 150)
+
+ scatter3D(
+ x = df_pca3$PC1, y = df_pca3$PC2, z = df_pca3$PC3,
+ col = pal[as.integer(df_pca3$cluster)], colkey = FALSE, # <- sin barra lateral
+ pch = 19, cex = 0.3, alpha = 0.35,
+ xlab = "PC1", ylab = "PC2", zlab = "PC3",
+ bty = "g", box = TRUE, ticktype = "detailed",
+ main = "GMM: Grafo 3D (MST) entre centroides en PC1–PC3"
+ )
+
+ points3D(
+ x = centroids$cx, y = centroids$cy, z = centroids$cz,
+ pch = 19, cex = 2.0, col = pal[as.integer(centroids$cluster)],
+ add = TRUE, colkey = FALSE
+ )
+
+ if (nrow(mst_pairs) > 0) {
+ apply(mst_pairs, 1, function(idx) {
+ segments3D(
+ x0 = coords[idx[1], 1], y0 = coords[idx[1], 2], z0 = coords[idx[1], 3],
+ x1 = coords[idx[2], 1], y1 = coords[idx[2], 2], z1 = coords[idx[2], 3],
+ lwd = 3, col = "gray30", add = TRUE
+ )
+ })
+ }
+ legend("topright", legend = lab_clusters,
+ col = pal[seq_len(k)], pch = 16, cex = 0.9, bty = "n")
+ dev.off()
+}
+
+```
+
+```{r}
+
+
+stopifnot(exists("df_obesidad"), exists("clusters_gmm"))
+stopifnot(nrow(df_obesidad) == length(clusters_gmm))
+
+
+df_res <- df_obesidad %>%
+ dplyr::mutate(cluster = factor(clusters_gmm))
+
+cont_vars <- c("Age", "Height", "Weight")
+ord_vars <- c("CAEC","CALC","CH2O","FAF","FCVC","NCP","TUE")
+bin_vars <- c("FAVC","Gender","SCC","SMOKE","family_history_with_overweight")
+
+
+missing_cont <- setdiff(cont_vars, names(df_res))
+if (length(missing_cont) > 0) {
+ stop("Faltan variables continuas en df_obesidad: ", paste(missing_cont, collapse=", "))
+}
+missing_ord <- setdiff(ord_vars, names(df_res))
+if (length(missing_ord) > 0) {
+ stop("Faltan variables ordinales en df_obesidad: ", paste(missing_ord, collapse=", "))
+}
+missing_bin <- setdiff(bin_vars, names(df_res))
+if (length(missing_bin) > 0) {
+ stop("Faltan variables binarias en df_obesidad: ", paste(missing_bin, collapse=", "))
+}
+if (!"MTRANS" %in% names(df_res)) stop("Falta la variable nominal MTRANS en df_obesidad.")
+
+
+tab_cont <- df_res %>%
+ dplyr::group_by(cluster) %>%
+ dplyr::summarise(
+ dplyr::across(
+ dplyr::all_of(cont_vars),
+ list(
+ n = ~ sum(!is.na(.)),
+ mean = ~ mean(., na.rm = TRUE),
+ sd = ~ sd(., na.rm = TRUE),
+ median = ~ median(., na.rm = TRUE),
+ p25 = ~ stats::quantile(., 0.25, na.rm = TRUE),
+ p75 = ~ stats::quantile(., 0.75, na.rm = TRUE)
+ ),
+ .names = "{.col}_{.fn}"
+ ),
+ .groups = "drop"
+ )
+
+
+tab_ord <- purrr::map_dfr(ord_vars, function(v) {
+ df_res %>%
+ dplyr::mutate(level = as.character(.data[[v]])) %>% 
+ dplyr::count(cluster, level, name = "n") %>%
+ dplyr::group_by(cluster) %>%
+ dplyr::mutate(pct = n / sum(n)) %>%
+ dplyr::ungroup() %>%
+ dplyr::mutate(Variable = v, .before = 1)
+})
+
+
+tab_bin <- purrr::map_dfr(bin_vars, function(v) {
+ df_res %>%
+ dplyr::mutate(level = as.character(.data[[v]])) %>%
+ dplyr::count(cluster, level, name = "n") %>%
+ dplyr::group_by(cluster) %>%
+ dplyr::mutate(pct = n / sum(n)) %>%
+ dplyr::ungroup() %>%
+ dplyr::mutate(Variable = v, .before = 1)
+})
+
+
+tab_mtrans <- df_res %>%
+ dplyr::mutate(level = as.character(.data[["MTRANS"]] )) %>%
+ dplyr::count(cluster, level, name = "n") %>%
+ dplyr::group_by(cluster) %>%
+ dplyr::mutate(pct = n / sum(n)) %>%
+ dplyr::ungroup() %>%
+ dplyr::mutate(Variable = "MTRANS", .before = 1)
+
+
+tab_nob <- NULL
+if ("NObeyesdad" %in% names(df_res)) {
+ tab_nob <- df_res %>%
+ dplyr::mutate(level = as.character(.data[["NObeyesdad"]] )) %>%
+ dplyr::count(cluster, level, name = "n") %>%
+ dplyr::group_by(cluster) %>%
+ dplyr::mutate(pct = n / sum(n)) %>%
+ dplyr::ungroup() %>%
+ dplyr::mutate(Variable = "NObeyesdad", .before = 1)
+}
+
+
+options(xtable.comment = FALSE)
+
+
+if (exists("bic_top")) {
+ print(xtable(
+ bic_top,
+ digits = 3,
+ caption = "GMM: modelos candidatos ordenados por BIC (top 20).",
+ label = "tab:gmm-bic"
+ ), include.rownames = FALSE)
+}
+
+
+print(xtable(
+ tab_cont, digits = 3,
+ caption = "Variables continuas por cl\\'uster (GMM).",
+ label = "tab:gmm-cont"
+), include.rownames = FALSE)
+
+
+for (v in ord_vars) {
+ sub <- tab_ord %>% dplyr::filter(Variable == v)
+ print(xtable(
+ sub, digits = 3,
+ caption = paste0("Distribuci\\'on de niveles por cl\\'uster (", v, ") — GMM"),
+ label = paste0("tab:gmm-ord-", tolower(v))
+ ), include.rownames = FALSE)
+}
+
+
+for (v in bin_vars) {
+ sub <- tab_bin %>% dplyr::filter(Variable == v)
+ print(xtable(
+ sub, digits = 3,
+ caption = paste0("Distribuci\\'on por niveles (", v, ") por cl\\'uster — GMM"),
+ label = paste0("tab:gmm-bin-", tolower(v))
+ ), include.rownames = FALSE)
+}
+
+
+print(xtable(
+ tab_mtrans, digits = 3,
+ caption = "Distribuci\\'on del medio de transporte (MTRANS) por cl\\'uster — GMM.",
+ label = "tab:gmm-mtrans"
+), include.rownames = FALSE)
+
+
+if (!is.null(tab_nob)) {
+ print(xtable(
+ tab_nob, digits = 3,
+ caption = "Distribuci\\'on de \\texttt{NObeyesdad} por cl\\'uster (validaci\\'on externa) — GMM.",
+ label = "tab:gmm-nobeyesdad"
+ ), include.rownames = FALSE)
+}
+
+
+```
+
+
+
+# OPTICS
+
+
+
+```{r}
+
+
+
+
+stopifnot(exists("X_scaled"))
+X_scaled <- as.matrix(X_scaled)
+
+
+dir.create("fig_optics", showWarnings = FALSE)
+
+k_max <- 10
+grid_minPts <- c(10, 15, 20, 25, 30)
+grid_xi <- c(0.03, 0.05, 0.07, 0.10, 0.12, 0.15)
+
+
+make_palette <- function(n) grDevices::hcl.colors(n, palette = "Dark 3", rev = FALSE)
+
+
+evaluate_combo <- function(minPts, xi) {
+ optics_obj <- dbscan::optics(X_scaled, minPts = minPts, eps = Inf)
+ xi_obj <- dbscan::extractXi(optics_obj, xi = xi)
+ cl_raw <- xi_obj$cluster # 0 = noise
+ 
+ k <- length(setdiff(unique(cl_raw), 0))
+ n_noise <- sum(cl_raw == 0)
+ 
+ sil_mean <- NA_real_
+ idx <- which(cl_raw > 0)
+ if (length(idx) >= 3 && length(unique(cl_raw[idx])) >= 2) {
+ D_sub <- dist(X_scaled[idx, , drop = FALSE], method = "euclidean")
+ sil <- cluster::silhouette(as.integer(factor(cl_raw[idx])), D_sub)
+ sil_mean <- mean(sil[, "sil_width"], na.rm = TRUE)
+ }
+ list(minPts=minPts, xi=xi, k=k, n_noise=n_noise,
+ sil_mean=sil_mean, optics_obj=optics_obj, xi_obj=xi_obj)
+}
+
+cat("Buscando mejor combinación (minPts, xi) para OPTICS...\n")
+res_list <- list(); r <- 1L
+for (m in grid_minPts) {
+ for (x in grid_xi) {
+ res_list[[r]] <- evaluate_combo(m, x)
+ r <- r + 1L
+ }
+}
+
+eval_df <- do.call(rbind, lapply(seq_along(res_list), function(i) {
+ data.frame(
+ rank = i,
+ minPts = res_list[[i]]$minPts,
+ xi = res_list[[i]]$xi,
+ k = res_list[[i]]$k,
+ n_noise= res_list[[i]]$n_noise,
+ sil_mean = res_list[[i]]$sil_mean
+ )
+})) %>%
+ arrange(desc(sil_mean), k)
+
+print(eval_df)
+
+
+pick_idx <- eval_df %>%
+ filter(!is.na(sil_mean), k >= 2, k <= k_max) %>%
+ arrange(desc(sil_mean), k) %>%
+ slice(1) %>%
+ pull(rank)
+
+if (length(pick_idx) == 0) {
+ base_idx <- eval_df %>%
+ filter(!is.na(sil_mean), k >= 2) %>%
+ arrange(desc(sil_mean), k) %>%
+ slice(1) %>% pull(rank)
+ 
+ optics_best <- res_list[[base_idx]]$optics_obj
+ minPts_best <- res_list[[base_idx]]$minPts
+ xi_best_val <- res_list[[base_idx]]$xi
+ 
+ xi_grid_tune <- c(seq(xi_best_val, 0.50, by = 0.01))
+ best_tune <- NULL
+ for (xi_try in xi_grid_tune) {
+ cl_try <- dbscan::extractXi(optics_best, xi = xi_try)$cluster
+ k_try <- length(setdiff(unique(cl_try), 0))
+ if (k_try <= k_max && k_try >= 2) {
+ best_tune <- list(xi = xi_try, cl = cl_try, k = k_try)
+ break
+ }
+ }
+ clusters_raw <- if (is.null(best_tune)) {
+ dbscan::extractXi(optics_best, xi = xi_best_val)$cluster
+ } else best_tune$cl
+} else {
+ optics_best <- res_list[[pick_idx]]$optics_obj
+ xi_best_val <- res_list[[pick_idx]]$xi
+ minPts_best <- res_list[[pick_idx]]$minPts
+ clusters_raw <- res_list[[pick_idx]]$xi_obj$cluster
+}
+
+k_found <- length(setdiff(unique(clusters_raw), 0))
+n_noise0 <- sum(clusters_raw == 0)
+cat(sprintf("OPTICS elegido: minPts=%d, xi=%.3f, k=%d, noise=%d\n",
+ minPts_best, xi_best_val, k_found, n_noise0))
+
+
+pca <- prcomp(X_scaled, center = FALSE, scale. = FALSE)
+var_exp <- (pca$sdev^2) / sum(pca$sdev^2)
+
+lev_core <- sort(unique(as.integer(setdiff(unique(clusters_raw), 0))))
+levels_all <- c(as.character(lev_core), "noise") # <- fuerza presencia de 'noise'
+
+lab_clusters <- ifelse(levels_all == "noise", "noise", paste0("C", levels_all))
+
+pal_core <- make_palette(max(1, length(lev_core)))
+col_map <- setNames(pal_core, as.character(lev_core))
+col_map <- c(col_map, noise = "#9E9E9E") # gris fijo para noise
+
+clusters_opt <- factor(ifelse(clusters_raw == 0, "noise", as.character(clusters_raw)),
+ levels = levels_all)
+
+
+tab_k <- as_tibble(
+ table(cluster = factor(clusters_opt, levels = levels_all), useNA = "no")
+) %>%
+ mutate(pct = round(100 * as.numeric(n) / sum(n), 1))
+cat("Resumen de clusters (post-procesado):\n"); print(tab_k)
+
+
+
+png("fig_optics/optics_reachability.png", width = 1400, height = 600, res = 130)
+par(mar = c(4,4,1,1))
+plot(optics_best) # dbscan::optics
+invisible(dev.off())
+
+
+idx_assigned <- which(clusters_opt != "noise")
+if (length(idx_assigned) >= 3 && length(unique(clusters_opt[idx_assigned])) >= 2) {
+ lv_no_noise <- levels_all[levels_all != "noise"]
+ D_sub <- dist(X_scaled[idx_assigned, , drop = FALSE], method = "euclidean")
+ sil <- cluster::silhouette(
+ as.integer(factor(clusters_opt[idx_assigned], levels = lv_no_noise)), D_sub
+ )
+ g_sil <- factoextra::fviz_silhouette(sil, print.summary = FALSE) +
+ scale_fill_manual(values = col_map[lv_no_noise],
+ limits = lv_no_noise, breaks = lv_no_noise, drop = FALSE) +
+ scale_color_manual(values = col_map[lv_no_noise],
+ limits = lv_no_noise, breaks = lv_no_noise, drop = FALSE) +
+ theme_minimal(base_size = 12) +
+ labs(title = sprintf("OPTICS: Silueta por clúster (minPts=%d, xi=%.2f)",
+ minPts_best, xi_best_val),
+ x = "Observación", y = "Anchura de silueta", fill = "Clúster", color = "Clúster")
+ ggsave("fig_optics/optics_silhouette.png", g_sil, width = 8, height = 5, dpi = 200)
+}
+
+
+df_pca6 <- tibble::as_tibble(pca$x[, 1:6]) %>%
+ stats::setNames(paste0("PC", 1:6)) %>%
+ dplyr::mutate(cluster = clusters_opt)
+
+g_pairs <- GGally::ggpairs(
+ df_pca6 %>% dplyr::select(PC1, PC2, PC3, PC4, PC5, PC6, cluster),
+ columns = 1:6,
+ mapping = ggplot2::aes(color = cluster, alpha = 0.85),
+ upper = list(continuous = "points"),
+ diag = list(continuous = "densityDiag"),
+ lower = list(continuous = "points"),
+ progress = FALSE
+)
+
+
+g_pairs <- g_pairs +
+ ggplot2::theme_minimal(base_size = 11) +
+ ggplot2::theme(legend.position = "none") + 
+ ggplot2::scale_color_manual(
+ values = col_map,
+ limits = levels_all,
+ breaks = levels_all,
+ drop = FALSE
+ ) +
+ ggplot2::ggtitle(sprintf(
+ "OPTICS (minPts=%d, xi=%.2f). Var. explicada: PC1=%.1f%%, PC2=%.1f%%, PC3=%.1f%%, PC4=%.1f%%, PC5=%.1f%%, PC6=%.1f%%",
+ minPts_best, xi_best_val,
+ 100*var_exp[1], 100*var_exp[2], 100*var_exp[3],
+ 100*var_exp[4], 100*var_exp[5], 100*var_exp[6]
+ ))
+
+ggplot2::ggsave("fig_optics/optics_pairs_pc1_6.png", g_pairs, width = 14, height = 10, dpi = 200)
+
+
+df_pca3 <- as_tibble(pca$x[, 1:3]) %>%
+ setNames(c("PC1","PC2","PC3")) %>%
+ mutate(cluster = clusters_opt)
+
+png("fig_optics/optics_pca3d.png", width = 1600, height = 1200, res = 150)
+plot3D::scatter3D(
+ x = df_pca3$PC1, y = df_pca3$PC2, z = df_pca3$PC3,
+ colvar = NULL, colkey = FALSE,
+ col = col_map[as.character(df_pca3$cluster)],
+ pch = 19, cex = 0.55,
+ xlab = sprintf("PC1 (%.1f%%)", 100*var_exp[1]),
+ ylab = sprintf("PC2 (%.1f%%)", 100*var_exp[2]),
+ zlab = sprintf("PC3 (%.1f%%)", 100*var_exp[3]),
+ bty = "g", box = TRUE, ticktype = "detailed",
+ main = sprintf("OPTICS: PCA 3D (PC1–PC3) — minPts=%d, xi=%.2f", minPts_best, xi_best_val)
+)
+legend("topright", legend = lab_clusters,
+ col = col_map[levels_all], pch = 16, pt.cex = 1, bty = "n")
+dev.off()
+
+
+set.seed(123)
+emb2 <- uwot::umap(
+ X_scaled, n_neighbors = 15, min_dist = 0.15,
+ n_components = 2, metric = "euclidean", verbose = FALSE
+)
+df_umap2 <- tibble(UMAP1 = emb2[,1], UMAP2 = emb2[,2], cluster = clusters_opt)
+
+g_umap2 <- ggplot(df_umap2, aes(UMAP1, UMAP2, color = cluster)) +
+ geom_point(alpha = 0.85, size = 1.2) +
+ scale_color_manual(values = col_map,
+ limits = levels_all, breaks = levels_all, drop = FALSE) +
+ theme_minimal(base_size = 12) +
+ guides(color = guide_legend(title = "Clúster")) +
+ ggtitle(sprintf("OPTICS: UMAP 2D — minPts=%d, xi=%.2f", minPts_best, xi_best_val))
+ggsave("fig_optics/optics_umap2.png", g_umap2, width = 8, height = 6, dpi = 200)
+
+
+set.seed(123)
+emb3 <- uwot::umap(
+ X_scaled, n_neighbors = 15, min_dist = 0.15,
+ n_components = 3, metric = "euclidean", verbose = FALSE
+)
+df_umap3 <- tibble(U1 = emb3[,1], U2 = emb3[,2], U3 = emb3[,3], cluster = clusters_opt)
+
+png("fig_optics/optics_umap3d.png", width = 1600, height = 1200, res = 150)
+plot3D::scatter3D(
+ x = df_umap3$U1, y = df_umap3$U2, z = df_umap3$U3,
+ colvar = NULL, colkey = FALSE,
+ col = col_map[as.character(df_umap3$cluster)],
+ pch = 19, cex = 0.55,
+ xlab = "UMAP1", ylab = "UMAP2", zlab = "UMAP3",
+ bty = "g", box = TRUE, ticktype = "detailed",
+ main = sprintf("OPTICS: UMAP 3D — minPts=%d, xi=%.2f", minPts_best, xi_best_val)
+)
+legend("topright", legend = lab_clusters,
+ col = col_map[levels_all], pch = 16, pt.cex = 1, bty = "n")
+dev.off()
+
+
+centroids <- df_pca3 %>%
+ dplyr::filter(cluster != "noise") %>%
+ dplyr::group_by(cluster) %>%
+ dplyr::summarise(cx = mean(PC1), cy = mean(PC2), cz = mean(PC3), .groups = "drop") %>%
+ dplyr::arrange(as.numeric(as.character(cluster)))
+
+coords <- as.matrix(centroids[, c("cx","cy","cz")])
+C <- as.matrix(dist(coords))
+n <- nrow(coords)
+if (n >= 2) {
+ in_mst <- rep(FALSE, n); in_mst[1] <- TRUE
+ mst_pairs <- matrix(NA_integer_, n - 1L, 2L)
+ for (e in 1:(n - 1L)) {
+ best_w <- Inf; best_i <- NA_integer_; best_j <- NA_integer_
+ I <- which(in_mst); J <- which(!in_mst)
+ for (i in I) {
+ if (length(J) == 0) break
+ j_star <- J[which.min(C[i, J])]
+ w <- C[i, j_star]
+ if (w < best_w) { best_w <- w; best_i <- i; best_j <- j_star }
+ }
+ in_mst[best_j] <- TRUE
+ mst_pairs[e, ] <- c(best_i, best_j)
+ }
+} else {
+ mst_pairs <- matrix(numeric(0), ncol = 2)
+}
+
+png("fig_optics/optics_graph3d.png", width = 1600, height = 1200, res = 150)
+plot3D::scatter3D(
+ x = df_pca3$PC1, y = df_pca3$PC2, z = df_pca3$PC3,
+ colvar = NULL, colkey = FALSE, # <-- ¡clave!
+ col = col_map[as.character(df_pca3$cluster)],
+ pch = 19, cex = 0.35, alpha = 0.35,
+ xlab = "PC1", ylab = "PC2", zlab = "PC3",
+ bty = "g", box = TRUE, ticktype = "detailed",
+ main = sprintf("OPTICS: Grafo 3D (MST) — minPts=%d, xi=%.2f", minPts_best, xi_best_val)
+)
+
+if (nrow(centroids) > 0) {
+ plot3D::points3D(
+ centroids$cx, centroids$cy, centroids$cz,
+ pch = 19, cex = 2.0,
+ col = col_map[as.character(centroids$cluster)],
+ add = TRUE, colkey = FALSE # <-- ¡clave!
+ )
+ if (nrow(mst_pairs) > 0) {
+ apply(mst_pairs, 1, function(idx) {
+ plot3D::segments3D(
+ x0 = coords[idx[1], 1], y0 = coords[idx[1], 2], z0 = coords[idx[1], 3],
+ x1 = coords[idx[2], 1], y1 = coords[idx[2], 2], z1 = coords[idx[2], 3],
+ lwd = 3, col = "gray30",
+ add = TRUE, colkey = FALSE # <-- ¡clave!
+ )
+ })
+ }
+ plot3D::text3D(
+ centroids$cx, centroids$cy, centroids$cz,
+ labels = paste0("C", as.character(centroids$cluster)),
+ add = TRUE, col = "black", cex = 1.0, font = 2, colkey = FALSE # <-- ¡clave!
+ )
+}
+
+legend("topright", legend = lab_clusters,
+ col = col_map[levels_all], pch = 16, pt.cex = 1, bty = "n")
+dev.off()
+
+```
+
+
+
+```{r}
+
+
+cont_vars <- c("Age", "Height", "Weight")
+ord_vars <- c("CAEC","CALC","CH2O","FAF","FCVC","NCP","TUE")
+bin_vars <- c("FAVC","Gender","SCC","SMOKE","family_history_with_overweight")
+
+
+missing_cont <- setdiff(cont_vars, names(df_obesidad))
+missing_ord <- setdiff(ord_vars, names(df_obesidad))
+missing_bin <- setdiff(bin_vars, names(df_obesidad))
+if (length(missing_cont)) stop("Faltan continuas: ", paste(missing_cont, collapse=", "))
+if (length(missing_ord)) stop("Faltan ordinales: ", paste(missing_ord, collapse=", "))
+if (length(missing_bin)) stop("Faltan binarias: ", paste(missing_bin, collapse=", "))
+
+df_res <- df_obesidad %>% mutate(cluster = clusters_opt)
+stopifnot(nrow(df_res) == length(clusters_opt))
+
+
+tab_cont <- df_res %>%
+ group_by(cluster) %>%
+ summarise(
+ across(
+ all_of(cont_vars),
+ list(
+ n = ~ sum(!is.na(.)),
+ mean = ~ mean(., na.rm = TRUE),
+ sd = ~ sd(., na.rm = TRUE),
+ median = ~ median(., na.rm = TRUE),
+ p25 = ~ stats::quantile(., 0.25, na.rm = TRUE),
+ p75 = ~ stats::quantile(., 0.75, na.rm = TRUE)
+ ),
+ .names = "{.col}_{.fn}"
+ ),
+ .groups = "drop"
+ )
+
+
+tab_ord <- map_dfr(ord_vars, function(v) {
+ df_res %>%
+ mutate(level = as.character(.data[[v]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>%
+ mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = v, .before = 1)
+})
+
+
+tab_bin <- map_dfr(bin_vars, function(v) {
+ df_res %>%
+ mutate(level = as.character(.data[[v]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>%
+ mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = v, .before = 1)
+})
+
+
+if (!"MTRANS" %in% names(df_res)) stop("Falta MTRANS en df_obesidad.")
+tab_mtrans <- df_res %>%
+ mutate(level = as.character(.data[["MTRANS"]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>%
+ mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = "MTRANS", .before = 1)
+
+
+tab_nob <- NULL
+if ("NObeyesdad" %in% names(df_res)) {
+ tab_nob <- df_res %>%
+ mutate(level = as.character(.data[["NObeyesdad"]])) %>%
+ count(cluster, level, name = "n") %>%
+ group_by(cluster) %>%
+ mutate(pct = n / sum(n)) %>%
+ ungroup() %>%
+ mutate(Variable = "NObeyesdad", .before = 1)
+}
+
+
+options(xtable.comment = FALSE)
+
+
+print(xtable(
+ tab_k, digits = 1,
+ caption = "Tama\\~nos de cl\\'uster (incluye \\texttt{noise}).",
+ label = "tab:optics-cluster-sizes"
+), include.rownames = FALSE)
+
+
+print(xtable(
+ tab_cont, digits = 3,
+ caption = "Variables continuas por cl\\'uster (OPTICS).",
+ label = "tab:optics-cont"
+), include.rownames = FALSE)
+
+
+for (v in ord_vars) {
+ sub <- tab_ord %>% filter(Variable == v)
+ print(xtable(
+ sub, digits = 3,
+ caption = paste0("Distribuci\\'on de niveles por cl\\'uster (", v, ") — OPTICS"),
+ label = paste0("tab:optics-ord-", tolower(v))
+ ), include.rownames = FALSE)
+}
+
+
+for (v in bin_vars) {
+ sub <- tab_bin %>% filter(Variable == v)
+ print(xtable(
+ sub, digits = 3,
+ caption = paste0("Distribuci\\'on por niveles (", v, ") por cl\\'uster — OPTICS"),
+ label = paste0("tab:optics-bin-", tolower(v))
+ ), include.rownames = FALSE)
+}
+
+
+print(xtable(
+ tab_mtrans, digits = 3,
+ caption = "Distribuci\\'on del medio de transporte (MTRANS) por cl\\'uster — OPTICS.",
+ label = "tab:optics-mtrans"
+), include.rownames = FALSE)
+
+
+if (!is.null(tab_nob)) {
+ print(xtable(
+ tab_nob, digits = 3,
+ caption = "Distribuci\\'on de \\texttt{NObeyesdad} por cl\\'uster (validaci\\'on externa) — OPTICS.",
+ label = "tab:optics-nobeyesdad"
+ ), include.rownames = FALSE)
+}
