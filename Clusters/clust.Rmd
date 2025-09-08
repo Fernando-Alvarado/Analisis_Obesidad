@@ -43,39 +43,78 @@ library(dbscan)
 
 ```
 
-```{r Data}
-data <- read.csv(here("Data", "obesity_clean.csv"))
-data <- data %>%
-  mutate(Gender = as.factor(Gender),
-         CALC = as.factor(CALC),
-         FAVC = as.factor(FAVC),
-         SCC = as.factor(SCC),
-         SMOKE = as.factor(SMOKE),
-         family_history_with_overweight = as.factor(family_history_with_overweight),
-         CAEC = as.factor(CAEC),
-         MTRANS = as.factor(MTRANS),
-         NObeyesdad = as.factor(NObeyesdad),
-         FCVC <- as.factor(FCVC),
-         NCP  <- as.factor(NCP),
-         CH2O <- as.factor(CH2O),
-         FAF  <- as.factor(FAF),
-         TUE  <- as.factor(TUE)
-        
-         
+
+
+```{r }
+# Lee datos (o usa tu objeto existente)
+df <- read.csv("obesity_clean.csv", check.names = FALSE)
+df_obesidad <- read.csv("obesity_clean.csv", check.names = FALSE)
+# Guarda etiqueta para evaluación externa (no entra al clustering)
+obesity_labels <- df$NObeyesdad
+
+# --- 1) Normaliza texto a minúsculas y recorta espacios ---
+norm_chr <- function(x) str_squish(str_to_lower(as.character(x)))
+
+df <- df %>%
+  mutate(
+    Gender  = norm_chr(Gender),
+    CALC    = norm_chr(CALC),
+    FAVC    = norm_chr(FAVC),
+    SCC     = norm_chr(SCC),
+    SMOKE   = norm_chr(SMOKE),
+    family_history_with_overweight = norm_chr(family_history_with_overweight),
+    CAEC    = norm_chr(CAEC),
+    MTRANS  = norm_chr(MTRANS)
   )
-summary(data$NObeyesdad)
 
-data_sin_peso <- data %>%
-  select(-NObeyesdad)
+# --- 2) Declara factores según tus dominios reales ---
+df <- df %>%
+  mutate(
+    # Binarias / nominales
+    Gender  = factor(Gender, levels = c("female","male")),
+    family_history_with_overweight = factor(family_history_with_overweight, levels = c("no","yes")),
+    FAVC    = factor(FAVC,  levels = c("no","yes")),
+    SMOKE   = factor(SMOKE, levels = c("no","yes")),
+    SCC     = factor(SCC,   levels = c("no","yes")),
+    MTRANS  = factor(MTRANS, levels = c("public_transportation","automobile","walking","motorbike","bike")),
+    # Ordinales
+    CAEC    = factor(CAEC, levels = c("no","sometimes","frequently","always"), ordered = TRUE),
+    CALC    = factor(CALC, levels = c("no","sometimes","frequently","always"), ordered = TRUE),
+    # Etiqueta (por si luego comparas): ordinal
+    NObeyesdad = factor(NObeyesdad, ordered = TRUE,
+      levels = c("insufficient_weight","normal_weight",
+                 "overweight_level_i","overweight_level_ii",
+                 "obesity_type_i","obesity_type_ii","obesity_type_iii"))
+  )
 
+# Si FCVC, NCP, CH2O, FAF, TUE vinieran como texto, asegúralas a num:
+df <- df %>% mutate(across(intersect(c("FCVC","NCP","CH2O","FAF","TUE"), names(.)),
+                           ~ suppressWarnings(as.numeric(.))))
 
-data_onehot <- fastDummies::dummy_cols(
-  data_sin_peso,
-  remove_first_dummy = FALSE,  
-  remove_selected_columns = TRUE
-)
+# --- 3) Recipe: ordinalscore + dummies k−1 + escalar ---
+rec <- recipe(~ ., data = df) %>%
+  update_role(NObeyesdad, new_role = "id") %>%            # excluye etiqueta del procesamiento
+  step_ordinalscore(all_ordered_predictors()) %>%         # CAEC, CALC -> 1..4
+  step_dummy(all_nominal_predictors(), one_hot = FALSE) %>% # k−1 dummies (evita colinealidad)
+  step_zv(all_predictors()) %>%                           # quita varianza cero si algún nivel no aparece
+  step_normalize(all_numeric_predictors())                # estandariza numéricas
+
+prep_rec <- prep(rec)
+X_scaled <- bake(prep_rec, new_data = NULL) %>%
+  dplyr::select(-dplyr::any_of("NObeyesdad"))
+
+# Chequeos rápidos
+stopifnot(!anyNA(X_scaled))
+stopifnot(is.numeric(as.matrix(X_scaled)))
 ```
 
+
+
+data_sin_peso
+
+data_onehot
+
+si omporta el orden son hot
 
 ```{r }
 #Matriz de distancias de Gower
@@ -94,12 +133,17 @@ nrow(malla_param)
 ```
 
 
+### DBSCAN con distancia de Gower (usando todas nuestras variables)
+
 ```{r  Db_Scan_todas}
+library(dbscan)
+library(cluster)
+
 epsFinal = malla_param$eps[[1]]
 minPtsFinal = malla_param$minPts[[1]]
 siluetaInicial = -1
 
-gower_dist <- daisy(data_onehot, metric = "gower") #Calculando nuestra metrica 
+gower_dist <- daisy(df, metric = "gower") #Calculando nuestra metrica 
 D <- as.dist(gower_dist)
 
 
@@ -139,14 +183,14 @@ print(mean(sil[, "sil_width"]))
 ```{r }
 mds <- cmdscale(D, k = 2, eig = TRUE)  # k=2 dimensiones
 
-# 3) Data frame para graficar
+
 plot_mds <- data.frame(
   Dim1 = mds$points[, 1],
   Dim2 = mds$points[, 2],
   cluster = factor(ifelse(db$cluster == 0, "ruido", paste0("C", db$cluster)))
 )
 
-# 4) Gráfica
+
 ggplot(plot_mds, aes(Dim1, Dim2, color = cluster)) +
   geom_point(alpha = 0.8, size = 2) +
   labs(title = "DBSCAN (PCoA sobre distancia de Gower)",
@@ -155,10 +199,12 @@ ggplot(plot_mds, aes(Dim1, Dim2, color = cluster)) +
   theme_minimal()
 ```
 
-### Quedandonos con solo las variables categoricas
+**Quedandonos con solo las variables categoricas**
+
+### Realizando clustering con PAM con distancia de Gower
 
 ```{r }
-df_cat  <- data_sin_peso %>%
+df_cat  <- df %>%
   select(where(is.factor))
 
 #VIENDOI EL TIPO DE Df_cat
@@ -168,22 +214,13 @@ str(df_cat)
 
 
 ```{r }
-# ---------- Paquetes ----------
-# install.packages(c("cluster","dplyr","ggplot2","forcats"))
-
-
 pam_gower_pipeline <- function(df, k_range = 1:12, na_label = "(NA)") {
   stopifnot(is.data.frame(df))
 
-  # 1) Asegurar categóricas y tratar NA como categoría
-  df_cat <- df %>%
-    mutate(across(everything(), ~ fct_explicit_na(as.factor(.), na_label)))
-
-  # 2) Distancia de Gower
   D <- daisy(df_cat, metric = "gower")  # disimilaridad en [0,1]
 
-  # 3) Probar k por silhouette con PAM (diss=TRUE porque pasamos distancia)
-  res <- lapply(k_range, function(k) {
+  
+  res <- lapply(k_range, function(k) {#  Probando  k por silhouette con PAM (diss=TRUE porque pasamos distancia)
     fit <- pam(D, k = k, diss = TRUE)
     sil <- silhouette(fit$clustering, D)
     sil_avg <- mean(sil[, "sil_width"])
@@ -194,10 +231,10 @@ pam_gower_pipeline <- function(df, k_range = 1:12, na_label = "(NA)") {
 
   cat("Mejor k:", best$k, " | Silhouette promedio:", round(best$sil_avg, 4), "\n")
 
-  # 4) Etiquetas finales
+
   clusters <- factor(best$fit$clustering)
 
-  # 5) Proyección 2D (PCoA/MDS) y gráfico
+  # Graficando en 2D con cmdscale
   mds <- cmdscale(as.dist(D), k = 2, eig = TRUE)
   plot_df <- data.frame(
     Dim1 = mds$points[, 1],
@@ -214,22 +251,35 @@ pam_gower_pipeline <- function(df, k_range = 1:12, na_label = "(NA)") {
 
   print(p)
 
-  # 6) Devolver todo lo útil
+   #Imprimiendo resultados de nuestro clustes
   list(
     clusters = clusters,
-    medoids = best$fit$medoids,   # índices de los representantes
+    medoids = best$fit$medoids,   # Mejor ajuste PAM
     silhouette_mean = best$sil_avg,
     k = best$k,
     plot_data = plot_df
   )
 }
 
-# ---------- USO ----------
-# Sustituye TU_DF por tu data frame (solo columnas categóricas)
 out_pam <- pam_gower_pipeline(df_cat, k_range = 2:12)
 head(out_pam$clusters)
 ```
 
+
+```{r }
+# Matriz de disimilitud con Gower
+D <- daisy(df_cat, metric = "gower")
+
+# Ajuste PAM con k = 2
+pam_fit <- pam(D, k = 2, diss = TRUE)
+
+# Gráfica de silueta
+fviz_silhouette(pam_fit)
+```
+
+
+
+### Realizando HClust con distancia de Gower
 
 ```{r }
 # ---------- Paquetes ----------
@@ -288,30 +338,83 @@ head(out_hc$clusters)
 
 
 
+```{r Corriendo_k-modes}
+library(klaR) 
+
+ks <- seq(2, 12)  # k a probar
+resumen <- data.frame(k=ks, sil_promedio = NA_real_)
+
+#ajustes <- vector("list", length(ks))
 
 
+for (i in 1:length(ks)) {
+  k <- ks[i]
+  fit <- kmodes(df_cat, modes = k, iter.max = 50, weighted = FALSE)  # simple matching
+  # silhouette: etiquetas + matriz de distancias
+  sil <- silhouette(fit$cluster, gower_dist)
+  resumen$sil_promedio[i] <- mean(sil[, "sil_width"])
+
+}
+
+resumen
+best_k <- resumen$k[which.max(resumen$sil_promedio)]
 
 
+print(resumen)
+print(best_k)
+
+```
+
+```{r }
+#Corriendo nuestro modelo seleccionado, podemos cambiar el numero de clusters
+mejor_fit <- kmodes(df_cat, modes = 2, iter.max = 50, weighted = FALSE)  # simple matching
+sil_best <- silhouette(mejor_fit$cluster, gower_dist) # Clculando nuestra silhouette
+
+sill_mejor <-  sil_best[, "sil_width"] #Calculando el promedio de nuestra silhouette
 
 
-
-
-
+# Grafica para ver la silueta por observación
+plot(sill_mejor,
+     pch = 19,        
+     col = "blue",
+     xlab = "Índice",
+     ylab = "Silhouette width",
+     main = "Siluetas por observación en K-modes")
+abline(h = mean(sill_mejor), col = "red", lwd = 2, lty = 2)  # promedio
+```
 
 
 ```{r }
+library(cluster)
+labels <- factor(mejor_fit$cluster)
+sil_obj  <- silhouette(as.integer(labels), gower_dist)
+sil_mean <- mean(sil_obj[, "sil_width"])
+
+print(sil_obj)
 
 ```
 
 
-
 ```{r }
+mds <- cmdscale(gower_dist, k = 2, eig = TRUE)
 
+coords <- as.data.frame(mds$points)
+colnames(coords) <- c("Dim1", "Dim2")
+coords$cluster <- labels
+
+# ====== Gráfica ======
+ggplot(coords, aes(x = Dim1, y = Dim2, color = cluster)) +
+  geom_point(alpha = 0.8, size = 1.8) +
+  labs(
+    title = sprintf("Clusters K-modes (k = %d)", nlevels(labels)),
+    subtitle = sprintf("Silhouette promedio: %.3f", sil_mean),
+    x = "Dim 1", y = "Dim 2", color = "Cluster"
+  ) +
+  theme_minimal()
 ```
 
 
 
-```{r }
 
-```
+
 
