@@ -204,8 +204,7 @@ ggplot(plot_mds, aes(Dim1, Dim2, color = cluster)) +
 ### Realizando clustering con PAM con distancia de Gower
 
 ```{r }
-df_cat  <- df %>%
-  select(where(is.factor))
+df_cat  <- X_scaled
 
 #VIENDOI EL TIPO DE Df_cat
 str(df_cat)
